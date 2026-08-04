@@ -9,3 +9,5 @@ results/
 dist/
 build/
 .DS_Store
+.claude/
+.codex/

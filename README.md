@@ -10,33 +10,41 @@ FOFA 发现 → 指纹识别 → 凭据卫生测试 → 账户导出 → 制品�
 
 ## 在 AI 工具中使用（Skill）
 
-本仓库遵循 [agentskills.io](https://agentskills.io) 开放标准：带 YAML frontmatter 的 `SKILL.md` 即为一个技能。仓库根目录的 [SKILL.md](SKILL.md) 是完整操作手册，Claude Code、Codex 等支持该标准的工具可以直接加载。仓库已内置项目级安装（软链接），clone 后无需任何操作：
-
-```text
-.claude/skills/keyhunter/SKILL.md   # Claude Code 项目级
-.codex/skills/keyhunter/SKILL.md    # Codex 项目级
-```
+本仓库遵循 [agentskills.io](https://agentskills.io) 开放标准：带 YAML frontmatter 的 `SKILL.md` 即为一个技能。仓库根目录的 [SKILL.md](SKILL.md) 是完整操作手册，Claude Code、Codex 等支持该标准的工具可以直接加载。
 
 ### Claude Code
 
-1. 在仓库根目录运行 `claude`，技能自动可用（项目级 `.claude/skills/`）。
-2. 调用方式二选一：
-   - **手动**：输入 `/keyhunter` 直接执行操作手册；
-   - **自动**：直接说"用 keyhunter 对这批目标跑一遍 sub2api 全流程"，Claude 会依据技能 description 自动加载并执行发现 → 指纹 → 撞库 → 导出 → 归一化。
-3. 想让所有项目都能用（个人级）：
+1. 在仓库根目录运行 `claude`，然后输入 `/keyhunter` 直接执行操作手册；或直接描述任务（如"用 keyhunter 对这批目标跑一遍 sub2api 全流程"），Claude 会依据技能 description 自动加载。
+2. 若技能未生效，手动安装（项目级或个人级任选）：
 
 ```bash
-mkdir -p ~/.claude/skills
-ln -s /path/to/keyHunter/skill/keyhunter ~/.claude/skills/keyhunter
+# 项目级（仅本仓库）
+mkdir -p .claude/skills/keyhunter
+ln -sf ../../../SKILL.md .claude/skills/keyhunter/SKILL.md
+
+# 个人级（所有项目可用）
+mkdir -p ~/.claude/skills/keyhunter
+ln -sf /path/to/keyHunter/SKILL.md ~/.claude/skills/keyhunter/SKILL.md
 # 或直接复制：
-# mkdir -p ~/.claude/skills/keyhunter && cp SKILL.md ~/.claude/skills/keyhunter/SKILL.md
+# cp SKILL.md ~/.claude/skills/keyhunter/SKILL.md
 ```
 
 ### Codex CLI
 
 1. 开启技能功能（一次性）：`codex --enable skills`（新版默认开启）。
-2. 项目级：仓库根目录 `.codex/skills/keyhunter` 已内置，clone 后在仓库内运行 `codex` 即自动发现。
-3. 个人级：`ln -s /path/to/keyHunter/skill/keyhunter ~/.codex/skills/keyhunter`
+2. 手动安装（项目级或个人级任选）：
+
+```bash
+# 项目级
+mkdir -p .codex/skills/keyhunter
+ln -sf ../../../SKILL.md .codex/skills/keyhunter/SKILL.md
+
+# 个人级
+mkdir -p ~/.codex/skills/keyhunter
+ln -sf /path/to/keyHunter/SKILL.md ~/.codex/skills/keyhunter/SKILL.md
+```
+
+> 提示：`.claude/` 与 `.codex/` 目录已被 `.gitignore` 忽略，不会提交到仓库，可放心安装。
 
 ### 其他 agent（Hermes / OpenCode 等）
 
