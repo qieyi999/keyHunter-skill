@@ -94,6 +94,45 @@ keyhunter validate --in results/artifacts --out results/valid.json
 
 验证输出区分 `token_parseable` / `expiry_known` / `access_alive`：无法解析或过期未知的令牌不会被当作可用。
 
+## 在 AI 工具中使用（Skill）
+
+本仓库遵循 [agentskills.io](https://agentskills.io) 开放标准：带 YAML frontmatter 的 `SKILL.md` 即为一个技能。仓库根目录的 [SKILL.md](SKILL.md) 是完整操作手册，Claude Code、Codex 等支持该标准的工具可以直接加载。仓库已内置项目级安装（软链接），clone 后无需任何操作：
+
+```text
+.claude/skills/keyhunter/SKILL.md   # Claude Code 项目级
+.codex/skills/keyhunter/SKILL.md    # Codex 项目级
+```
+
+### Claude Code
+
+1. 在仓库根目录运行 `claude`，技能自动可用（项目级 `.claude/skills/`）。
+2. 调用方式二选一：
+   - **手动**：输入 `/keyhunter` 直接执行操作手册；
+   - **自动**：直接说"用 keyhunter 对这批目标跑一遍 sub2api 全流程"，Claude 会依据技能 description 自动加载并执行发现 → 指纹 → 撞库 → 导出 → 归一化。
+3. 想让所有项目都能用（个人级）：
+
+```bash
+mkdir -p ~/.claude/skills
+ln -s /path/to/keyHunter/skill/keyhunter ~/.claude/skills/keyhunter
+# 或直接复制：
+# mkdir -p ~/.claude/skills/keyhunter && cp SKILL.md ~/.claude/skills/keyhunter/SKILL.md
+```
+
+### Codex CLI
+
+1. 开启技能功能（一次性）：`codex --enable skills`（新版默认开启）。
+2. 项目级：仓库根目录 `.codex/skills/keyhunter` 已内置，clone 后在仓库内运行 `codex` 即自动发现。
+3. 个人级：`ln -s /path/to/keyHunter/skill/keyhunter ~/.codex/skills/keyhunter`
+
+### 其他 agent（Hermes / OpenCode 等）
+
+凡支持 agentskills.io 标准的工具，把 `SKILL.md` 放进其技能目录即可，常见位置：
+
+- 社区约定通用目录：`.agents/skills/<name>/SKILL.md`
+- OpenCode：在配置中设置 `skill.paths` 指向本仓库的 skill 目录
+
+> 注意：软链接依赖 git 的 symlink 支持（macOS/Linux 默认可用；Windows 需 `core.symlinks=true`，否则请改为直接复制 SKILL.md）。
+
 ## 参考文档
 
 - [操作手册（SKILL.md）](SKILL.md)

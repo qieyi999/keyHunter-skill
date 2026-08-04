@@ -7,6 +7,8 @@ description: Operator playbook for the keyHunter CLI — FOFA discovery, product
 
 Self-contained workflow implemented by the `keyhunter` CLI in this repo.
 
+> **Loading this skill**: it ships as project-level skills at `.claude/skills/keyhunter/SKILL.md` (Claude Code) and `.codex/skills/keyhunter/SKILL.md` (Codex) — symlinks to this file. If the user wants it available in another project, symlink or copy this file to that tool's skills directory (`~/.claude/skills/keyhunter/SKILL.md` for personal Claude Code use). The CLI itself installs with `pip install -e .`; see README.md (Chinese) for the full agent-integration guide.
+
 ```text
 discover → fingerprint → spray → export → normalize → (optional) validate
 ```
