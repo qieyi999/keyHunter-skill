@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from keyhunter.config import Settings
+from keyhunter.config import BROWSER_USER_AGENT, Settings
 from keyhunter.products import ProductProfile
 
 
@@ -15,7 +15,7 @@ def _client(settings: Settings) -> httpx.Client:
         proxy=settings.proxy,
         follow_redirects=True,
         verify=False,
-        headers={"User-Agent": "keyhunter/0.1"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
     )
 
 
@@ -58,7 +58,11 @@ def fingerprint_one(
             ):
                 product_evidence = True
                 result["evidence"].append(f"json_marker@{path}")
-            if path == product.login_path and resp.status_code < 500 and resp.status_code != 404:
+            if (
+                path == product.login_path
+                and resp.status_code < 500
+                and resp.status_code != 404
+            ):
                 surface_evidence = True
                 result["evidence"].append(f"login_route@{path}:{resp.status_code}")
             if path in {"/api/status", "/v1/models"} and resp.status_code == 200:

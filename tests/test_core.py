@@ -6,9 +6,12 @@ from typing import Self
 
 import httpx
 
-from keyhunter.config import Settings
+from keyhunter.config import BROWSER_USER_AGENT, Settings
+from keyhunter.export import _client as export_http_client
 from keyhunter.export import export_sub2api_accounts
+from keyhunter.fingerprint import _client as fingerprint_http_client
 from keyhunter.fingerprint import fingerprint_one
+from keyhunter.fofa import FofaClient
 from keyhunter.normalize import (
     account_to_cpa,
     extract_api_keys,
@@ -18,13 +21,17 @@ from keyhunter.normalize import (
     normalize_newapi_exports,
 )
 from keyhunter.products import ProductProfile, get_product
+from keyhunter.spray import _client as spray_http_client
 from keyhunter.spray import spray_target
 from keyhunter.util import normalize_origin, sha256_text, write_json
 from keyhunter.validate import validate_cpa, validate_dir
 
 
 def test_normalize_origin_basic() -> None:
-    assert normalize_origin("example.com", "1.2.3.4", "8080", "http") == "http://example.com:8080"
+    assert (
+        normalize_origin("example.com", "1.2.3.4", "8080", "http")
+        == "http://example.com:8080"
+    )
     assert normalize_origin("https://a.b/c", "", None, None) == "https://a.b"
     assert normalize_origin("", "9.9.9.9", "443", None) == "https://9.9.9.9"
 
@@ -89,6 +96,30 @@ def _settings(concurrency: int = 2) -> Settings:
     return Settings("", "", "https://fofa.info", 100, 3, None, 1, concurrency)
 
 
+def test_default_http_clients_use_browser_user_agent() -> None:
+    settings = _settings()
+    fofa = FofaClient(settings)
+    clients = [
+        fofa.http,
+        fingerprint_http_client(settings),
+        spray_http_client(settings),
+        export_http_client(settings),
+    ]
+    try:
+        for client in clients:
+            request = client.build_request("GET", "https://example.test")
+            user_agent = request.headers["User-Agent"]
+            assert user_agent == BROWSER_USER_AGENT
+            assert user_agent.startswith("Mozilla/5.0 ")
+            assert " Chrome/" in user_agent
+            assert user_agent.endswith(" Safari/537.36")
+            assert "hunter" not in user_agent.lower()
+    finally:
+        fofa.close()
+        for client in clients[1:]:
+            client.close()
+
+
 class _FingerprintHttp:
     def __init__(self, responses: dict[str, httpx.Response]) -> None:
         self.responses = responses
@@ -100,7 +131,9 @@ class _FingerprintHttp:
 
 def test_sub2api_fingerprint_requires_product_evidence() -> None:
     generic = _FingerprintHttp({"/api/v1/auth/login": httpx.Response(405)})
-    miss = fingerprint_one("http://target", get_product("sub2api"), _settings(), generic)
+    miss = fingerprint_one(
+        "http://target", get_product("sub2api"), _settings(), generic
+    )
     assert miss["alive"] is True
     assert miss["matched"] is False
 
@@ -128,13 +161,19 @@ class _SprayClient:
         password = json["password"]
         self.calls.append(password)
         if password == "plain":
-            return httpx.Response(200, json={"access_token": "user", "user": {"role": "user"}})
+            return httpx.Response(
+                200, json={"access_token": "user", "user": {"role": "user"}}
+            )
         if password == "admin":
-            return httpx.Response(200, json={"access_token": "admin", "user": {"role": "admin"}})
+            return httpx.Response(
+                200, json={"access_token": "admin", "user": {"role": "admin"}}
+            )
         return httpx.Response(401, json={"detail": "bad credentials"})
 
 
-def test_spray_continues_after_non_admin_and_defaults_to_all(monkeypatch, tmp_path: Path) -> None:
+def test_spray_continues_after_non_admin_and_defaults_to_all(
+    monkeypatch, tmp_path: Path
+) -> None:
     (tmp_path / "users.txt").write_text("operator\n", encoding="utf-8")
     (tmp_path / "passwords.txt").write_text("plain\nadmin\n", encoding="utf-8")
     product = ProductProfile(
@@ -175,7 +214,9 @@ class _ExportClient:
         return httpx.Response(200, json={"message": "ok"})
 
 
-def test_sub2api_export_rejects_unexpected_success_schema(monkeypatch, tmp_path: Path) -> None:
+def test_sub2api_export_rejects_unexpected_success_schema(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("keyhunter.export._client", _ExportClient)
     result = export_sub2api_accounts(
         "http://target", "token", _settings(), out_dir=tmp_path
@@ -190,8 +231,14 @@ def test_normalize_preserves_same_email_accounts(tmp_path: Path) -> None:
         raw,
         {
             "accounts": [
-                {"name": "same@example.com", "credentials": {"access_token": "one.one.one"}},
-                {"name": "same@example.com", "credentials": {"access_token": "two.two.two"}},
+                {
+                    "name": "same@example.com",
+                    "credentials": {"access_token": "one.one.one"},
+                },
+                {
+                    "name": "same@example.com",
+                    "credentials": {"access_token": "two.two.two"},
+                },
             ]
         },
     )
@@ -209,7 +256,9 @@ def test_high_value_accepts_naive_iso_timestamp() -> None:
     assert summary["high_value"] is True
 
 
-def test_validate_rejects_unknown_or_invalid_exp_and_isolates_bad_files(tmp_path: Path) -> None:
+def test_validate_rejects_unknown_or_invalid_exp_and_isolates_bad_files(
+    tmp_path: Path,
+) -> None:
     unknown = validate_cpa({"access_token": "not-a-jwt"})
     assert unknown["access_alive"] is False
     assert unknown["usable"] is False

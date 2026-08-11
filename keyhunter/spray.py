@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from keyhunter.config import Settings
+from keyhunter.config import BROWSER_USER_AGENT, Settings
 from keyhunter.products import ProductProfile
 
 
@@ -15,7 +15,7 @@ def _client(settings: Settings) -> httpx.Client:
         proxy=settings.proxy,
         follow_redirects=True,
         verify=False,
-        headers={"User-Agent": "keyhunter/0.1"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
     )
 
 
@@ -116,7 +116,9 @@ def try_login(
             result["access_token"] = token
             result["user_id"] = _extract_user_id(payload)
             result["admin"] = _is_admin(payload)
-            result["raw_keys"] = sorted(payload.keys()) if isinstance(payload, dict) else []
+            result["raw_keys"] = (
+                sorted(payload.keys()) if isinstance(payload, dict) else []
+            )
     except httpx.HTTPError as exc:
         result["error"] = type(exc).__name__
     finally:

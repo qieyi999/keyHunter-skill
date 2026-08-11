@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from keyhunter.config import Settings
+from keyhunter.config import BROWSER_USER_AGENT, Settings
 from keyhunter.products import ProductProfile
 from keyhunter.util import safe_filename, sha256_text, write_json
 
@@ -16,11 +16,13 @@ def _client(settings: Settings) -> httpx.Client:
         proxy=settings.proxy,
         follow_redirects=True,
         verify=False,
-        headers={"User-Agent": "keyhunter/0.1"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
     )
 
 
-def _auth_headers(access_token: str, product: ProductProfile, user_id: str | None) -> dict[str, str]:
+def _auth_headers(
+    access_token: str, product: ProductProfile, user_id: str | None
+) -> dict[str, str]:
     headers = {"Authorization": f"Bearer {access_token}"}
     if product.auth_header_user_id and user_id:
         headers["New-API-User"] = str(user_id)
@@ -125,7 +127,10 @@ def export_newapi_family(
                 try:
                     bundle["post_auth"][path] = r.json()
                 except ValueError:
-                    bundle["post_auth"][path] = {"status": r.status_code, "raw": r.text[:1000]}
+                    bundle["post_auth"][path] = {
+                        "status": r.status_code,
+                        "raw": r.text[:1000],
+                    }
             except httpx.HTTPError as exc:
                 bundle["post_auth"][path] = {"error": type(exc).__name__}
 

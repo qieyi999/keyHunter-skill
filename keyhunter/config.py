@@ -9,6 +9,12 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(__file__).resolve().parent / "data"
 
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/151.0.0.0 Safari/537.36"
+)
+
 
 @dataclass(frozen=True)
 class Settings:
