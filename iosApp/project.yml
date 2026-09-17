@@ -1,0 +1,208 @@
+# XcodeGen 配置文件 - 生成 iosApp.xcodeproj
+#
+# 用法 (macOS):
+#   brew install xcodegen
+#   cd iosApp
+#   xcodegen generate
+#
+# XcodeGen 优势:
+# - project.yml 是纯文本, 可 git 跟踪, 避免二进制 .xcodeproj 冲突
+# - 团队协作时每人本地生成 .xcodeproj, 无需 merge 冲突
+# - 配置变更后重新 generate 即可, 无需手动 Xcode 操作
+#
+# 工程配置:
+# - iOS 14.0+ (SwiftUI App 生命周期 @main 要求)
+# - Swift 5.9
+# - 依赖 shared framework (Kotlin Multiplatform 产出)
+
+name: iosApp
+options:
+  bundleIdPrefix: shutiao.reader
+  deploymentTarget:
+    iOS: "14.0"
+  developmentLanguage: zh-Hans
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""  # 团队 ID (Apple Developer 账号, 留空用 Personal Team)
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_BITCODE: NO
+
+targets:
+  iosApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: .
+        excludes:
+          - "project.yml"
+          - "README.md"
+          - "*.xcodeproj"
+          - "build"
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: legado
+        # 版本号与安卓端对齐 (app/build.gradle.kts versionName/versionCode):
+        # 由根工程 syncIosVersion 任务按 git 提交数 + GMT+8 构建时刻自动写入,
+        # xcodegen generate 会用它重写 Info.plist (与本文件双写关系)。
+        CFBundleShortVersionString: "3.26.081614"
+        CFBundleVersion: "17376"
+        # 状态栏 (Compose Multiplatform 自管理)
+        UIStatusBarStyle: UIStatusBarStyleDefault
+        UIStatusBarHidden: false
+        UIViewControllerBasedStatusBarAppearance: true
+        # Compose Multiplatform 1.11+ 启动时强制校验；缺失或为 false 会直接抛异常终止进程。
+        CADisableMinimumFrameDurationOnPhone: true
+        # 屏幕方向: 阅读类 App, 竖屏 + 横屏
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UILaunchStoryboardName: ""
+        # Compose 自处理 safeArea, 窗口铺满
+        UIRequiresFullScreen: false
+        # 书源 URL 常为 http://, ATS 默认强制 https 会阻塞抓取与封面加载
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        # audio: TTS 朗读后台继续; processing: 缓存书籍的 BGProcessingTask
+        UIBackgroundModes:
+          - audio
+          - processing
+        # BGTaskScheduler 任务标识, 必须与 shared IosBackgroundTasks.kt 的
+        # CACHE_BOOK_TASK_ID 编译期常量逐字一致 (对不上 register 直接崩), 故写死不用变量
+        BGTaskSchedulerPermittedIdentifiers:
+          - shutiao.reader.cachebook
+        # 沙盒 Documents 在"文件"App 与 Finder 可见 (导出/另存为落地点)
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        # 保存图片到相册权限说明 (图片长按菜单"保存到相册"; iOS 14+ 缺此 key 调用会直接崩)
+        NSPhotoLibraryAddUsageDescription: 保存阅读页图片到系统相册需要访问你的照片库
+        # legado:// / yuedu:// deep link (一键导入书源/替换规则/主题等),
+        # 对照 app 端 AndroidManifest AssociationActivity intent-filter (scheme legado/yuedu)。
+        # 回调链: SwiftUI onOpenURL (iOSApp.swift) → shared framework
+        # LegadoDeepLinkIosKt.handleLegadoDeepLink → commonMain LegadoDeepLinkHandler
+        CFBundleURLTypes:
+          - CFBundleURLName: io.legado.app.deeplink
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - legado
+              - yuedu
+        # 外部视频投递入口 (对照 Android FileAssociationProvider 的 VIEW/SEND + video/* intent-filter):
+        # 让 legado 出现在"用其他应用打开 / 分享到"候选里, 打开后由 iOSApp.swift onOpenURL →
+        # shared handleIosLaunchRequest → LaunchRequest.ImportFile → LegadoApp 嗅探视频 →
+        # AppRoute.VideoPlay(VideoPlayTarget.Direct)。
+        # 为什么两条 entry: 只声明自己确证的 UTI (public.movie 总类 + 4 个具体电影类),
+        # mkv/webm/flv/m3u8 在 iOS 公开 UTI 表里查不到可确证的标识符 (本机无 macOS 可核,
+        # 且 UTI 注册表在系统 LaunchServices 里, 不随 Kotlin platform klib 提供),
+        # 按"不凭空造 UTI"的约定改用 CFBundleTypeExtensions 兜底, 扩展名集合与
+        # commonMain AppPattern.videoFileRegex (mp4|mkv|mov|webm|flv|avi|ts|m3u8) 逐一对齐。
+        # ⚠️ 本段与 Info.plist 双写 (xcodegen generate 会用本段重写 Info.plist)
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Movie
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.movie
+              - public.mpeg-4
+              - public.mpeg-2-transport-stream
+              - public.quicktime-movie
+              - public.avi
+          - CFBundleTypeName: Video File
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            CFBundleTypeExtensions:
+              - mp4
+              - mkv
+              - mov
+              - webm
+              - flv
+              - avi
+              - ts
+              - m3u8
+        # 应用图标与交替图标 (换桌面图标, 对照 Android Launcher1/4/5):
+        # 主图标 AppIcon.png (默认), 交替图标 Icon1/Icon4/Icon5.png, 经
+        # UIApplication.setAlternateIconName 切换 (见 shared IosPlatformCapabilities.changeLauncherIcon)。
+        # ⚠️ 本段与 Info.plist 双写 (xcodegen generate 用本段重写 Info.plist)
+        CFBundleIcons:
+          CFBundlePrimaryIcon:
+            CFBundleIconFiles:
+              - AppIcon
+          CFBundleAlternateIcons:
+            Icon1:
+              CFBundleIconFiles:
+                - Icon1
+            Icon4:
+              CFBundleIconFiles:
+                - Icon4
+            Icon5:
+              CFBundleIconFiles:
+                - Icon5
+        CFBundleIcons~ipad:
+          CFBundlePrimaryIcon:
+            CFBundleIconFiles:
+              - AppIcon
+          CFBundleAlternateIcons:
+            Icon1:
+              CFBundleIconFiles:
+                - Icon1
+            Icon4:
+              CFBundleIconFiles:
+                - Icon4
+            Icon5:
+              CFBundleIconFiles:
+                - Icon5
+    settings:
+      base:
+        PRODUCT_NAME: legado
+        # Kotlin 官方 direct integration 将当前 SDK/架构/构建类型对应的 framework
+        # 复制到 TARGET_BUILD_DIR 并签名，不再硬编码 shared/build/bin 下的变体路径。
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)"
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+        OTHER_LDFLAGS:
+          - "-framework"
+          - "shared"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+      # 包名与安卓端对齐 (applicationId 基包 shutiao.reader):
+      # Debug 构建 → shutiao.reader.debug, Release 构建 → shutiao.reader.release
+      configs:
+        debug:
+          PRODUCT_BUNDLE_IDENTIFIER: shutiao.reader.debug
+        release:
+          PRODUCT_BUNDLE_IDENTIFIER: shutiao.reader.release
+    preBuildScripts:
+      # 每次构建前自动把 iOS 版本号与安卓对齐 (git 提交数 + GMT+8 构建时刻),
+      # 写入 iosApp/project.yml 与 Info.plist, 供后续 Info.plist 处理与签名使用。
+      # 独立于下方 Kotlin framework 构建 (IDE 直编 framework 时也会执行)。
+      - script: |
+          #!/bin/bash
+          set -e
+          cd "$SRCROOT/.."
+          ./gradlew syncIosVersion --quiet
+        name: Sync iOS version with Android
+        basedOnDependencyAnalysis: false
+      - script: |
+          #!/bin/bash
+          set -e
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            echo "Skipping Gradle framework build because the IDE already built it."
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :shared:embedAndSignAppleFrameworkForXcode --stacktrace
+        name: Embed and sign shared framework
+        basedOnDependencyAnalysis: false
+    scheme:
+      testTargets: []
+      gatherCoverageData: false

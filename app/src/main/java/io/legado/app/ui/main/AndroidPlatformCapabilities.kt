@@ -1,0 +1,2453 @@
+package io.legado.app.ui.main
+
+import android.app.SearchManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.view.RoundedCorner
+import android.view.ViewConfiguration
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.DropdownMenuItem
+import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
+import androidx.compose.material.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
+import androidx.documentfile.provider.DocumentFile
+import androidx.fragment.app.commit
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import io.legado.app.App
+import io.legado.app.constant.AppConst
+import io.legado.app.constant.AppLog
+import io.legado.app.constant.AppPattern
+import io.legado.app.constant.BookType
+import io.legado.app.constant.EventBus
+import io.legado.app.constant.appInfo
+import io.legado.app.data.appDb
+import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookChapter
+import io.legado.app.data.entities.BookSource
+import io.legado.app.data.entities.BookSourcePart
+import io.legado.app.data.entities.HttpTTS
+import io.legado.app.data.entities.Review
+import io.legado.app.exception.InvalidBooksDirException
+import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.AppWebDav
+import io.legado.app.help.CrashHandler
+import io.legado.app.help.DirectLinkUpload
+import io.legado.app.help.IntentData
+import io.legado.app.help.IntentHelp
+import io.legado.app.help.LauncherIconHelp
+import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.delBookCore
+import io.legado.app.help.book.getExportFileName
+import io.legado.app.help.book.getRemoteUrl
+import io.legado.app.help.book.isLocal
+import io.legado.app.help.book.isWebFile
+import io.legado.app.help.book.removeType
+import io.legado.app.help.book.toShelfJsonMap
+import io.legado.app.help.book.toggleBookshelfCore
+import io.legado.app.help.book.tryParesExportFileName
+import io.legado.app.help.config.AppConfig
+import io.legado.app.help.config.LocalConfig
+import io.legado.app.help.config.ThemeConfig
+import io.legado.app.help.coroutine.Coroutine
+import io.legado.app.help.i18n.androidAppString
+import io.legado.app.model.BookCover
+import io.legado.app.model.CheckSource
+import io.legado.app.model.Debug
+import io.legado.app.model.analyzeRule.AnalyzeUrl
+import io.legado.app.model.fileBook.FileBook
+import io.legado.app.model.fileBook.importFromArchive
+import io.legado.app.model.fileBook.importLocalFile
+import io.legado.app.model.fileBook.saveBookFile
+import io.legado.app.service.WebService
+import io.legado.app.ui.book.import.ImportFileItem
+import io.legado.app.ui.book.import.local.ImportBook
+import io.legado.app.ui.book.import.local.ImportBookViewModel
+import io.legado.app.ui.book.read.config.FontItem
+import io.legado.app.ui.book.read.config.HttpTtsEditDialog
+import io.legado.app.ui.book.source.BookSourceSort
+import io.legado.app.ui.book.source.manage.BookSourceViewModel
+import io.legado.app.ui.compose.component.AppAutoCompleteField
+import io.legado.app.ui.compose.component.AppCheckbox
+import io.legado.app.ui.compose.component.AppDropdownMenu
+import io.legado.app.ui.compose.component.AppRadioButton
+import io.legado.app.ui.compose.component.AppSlider
+import io.legado.app.ui.compose.component.AppSwitch
+import io.legado.app.ui.compose.component.AppTextField
+import io.legado.app.ui.compose.dialogs.alert
+import io.legado.app.ui.compose.dialogs.selector
+import io.legado.app.ui.compose.platform.rememberPainter
+import io.legado.app.ui.compose.platform.rememberString
+import io.legado.app.ui.compose.platform.rememberStringArray
+import io.legado.app.ui.compose.theme.AppTheme
+import io.legado.app.ui.config.ThemeCustomizeDialog
+import io.legado.app.ui.root.AppNavigatorProviders
+import io.legado.app.ui.root.AppOverlay
+import io.legado.app.ui.root.AppRoute
+import io.legado.app.ui.root.BookRef
+import io.legado.app.ui.root.DialogTransitionSpec
+import io.legado.app.ui.root.PlatformCapabilities
+import io.legado.app.ui.root.RouteTransitionSpec
+import io.legado.app.ui.root.TransitionEasing
+import io.legado.app.ui.root.encodeBookVariableOverlayPayload
+import io.legado.app.ui.root.encodeSourceVariableOverlayPayload
+import io.legado.app.ui.root.toReadRoute
+import io.legado.app.ui.root.toRouteRef
+import io.legado.app.ui.route.encodeReviewListDialogPayload
+import io.legado.app.utils.ACache
+import io.legado.app.utils.ArchiveUtils
+import io.legado.app.utils.FileDoc
+import io.legado.app.utils.FileUtils
+import io.legado.app.utils.GSON
+import io.legado.app.utils.RealPathUtil
+import io.legado.app.utils.RemoteAssetsUtils
+import io.legado.app.utils.UrlUtil
+import io.legado.app.utils.compress.ZipUtils
+import io.legado.app.utils.createFileIfNotExist
+import io.legado.app.utils.createFolderIfNotExist
+import io.legado.app.utils.delete
+import io.legado.app.utils.externalCache
+import io.legado.app.utils.externalFiles
+import io.legado.app.utils.find
+import io.legado.app.utils.getClipText
+import io.legado.app.utils.isAbsUrl
+import io.legado.app.utils.isContentScheme
+import io.legado.app.utils.isPad
+import io.legado.app.utils.isUri
+import io.legado.app.utils.list
+import io.legado.app.utils.openFileUri
+import io.legado.app.utils.openInputStream
+import io.legado.app.utils.openOutputStream
+import io.legado.app.utils.openUrl
+import io.legado.app.utils.postEvent
+import io.legado.app.utils.printOnDebug
+import io.legado.app.utils.restart
+import io.legado.app.utils.sendToClip
+import io.legado.app.utils.share
+import io.legado.app.utils.showDialogFragment
+import io.legado.app.utils.stackTraceStr
+import io.legado.app.utils.toastOnUi
+import io.legado.app.utils.verificationField
+import io.legado.app.utils.writeToOutputStream
+import kotlinx.coroutines.Dispatchers.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import java.io.File
+import java.io.FileOutputStream
+
+/**
+ * 等 Overlay 结果的超时上限: 取消关闭对话框不回传结果, 无超时则协程永久挂起。
+ * 10 分钟对"挑封面/选文件"这类用户操作足够宽裕, 又能保证泄漏有界。
+ */
+private const val OVERLAY_RESULT_TIMEOUT_MS = 10 * 60 * 1000L
+
+/**
+ * 澎湃 OS activity 转场插值器参数 (miui-services.jar
+ * `AppTransitionInjector$ActivityTranstionInterpolator`, 由 createActivityOpenCloseTransition
+ * 以 response=0.8 / damping=0.95 构造)。
+ */
+private val MiuiActivityTransitionEasing =
+    TransitionEasing.Spring(response = 0.8f, damping = 0.95f)
+
+class AndroidPlatformCapabilities(
+    private val activity: MainActivity,
+) : PlatformCapabilities {
+
+    // 导入书籍: 复用 ImportBookViewModel 维护 rootDoc/subDocs 状态 (对照 ImportBookActivity)
+    // 经 ViewModelProvider 绑定 activity ViewModelStore, lifecycle 由 activity 管理
+    private val importViewModel by lazy {
+        ViewModelProvider(activity).get(ImportBookViewModel::class.java)
+    }
+    private var scanDocJob: Job? = null
+
+    // ===== 导入书籍状态流 (对照 ImportBookActivity.initData/upDocs/scanFolder) =====
+
+    // 文件列表: 订阅 viewModel.dataFlow, 子目录时前置"返回上级"项 (对照 initData 的 collect)
+    private val importItemsState by lazy {
+        MutableStateFlow<List<ImportFileItem>>(emptyList()).also { state ->
+            importViewModel.dataFlowStart = { ensureRootDoc() }
+            activity.lifecycleScope.launch(IO) {
+                importViewModel.dataFlow.conflate().collect { docs ->
+                    val items = if (importViewModel.subDocs.isNotEmpty()) {
+                        listOf(ImportBook(importViewModel.subDocs.last(), isUpDir = true)) + docs
+                    } else {
+                        docs
+                    }
+                    state.value = items
+                }
+            }
+        }
+    }
+
+    // 面包屑路径: rootDoc.name/.../当前目录/ (对照 upDocs 内 showBreadcrumb)
+    private val importPathState = MutableStateFlow<String?>(null)
+
+    // 扫描加载中 (对照 scanFolder 的 refreshProgressBar.isAutoLoading)
+    private val importLoadingState = MutableStateFlow(false)
+
+    // 空态文案可见 (对照 initRootDoc/initRootPath 的 tvEmptyMsg)
+    private val importEmptyMsgState = MutableStateFlow(false)
+
+    // ===== 全局转场动画平台 spec (方案 A: 动画单一注入点参数化) =====
+    // Android: 澎湃 OS activity 转场语义, 逐字复刻 miui-services.jar 的
+    // com.android.server.wm.AppTransitionInjector.createActivityOpenCloseTransition:
+    // 前进 = 新页全宽滑入 (不淡入) + 旧页左移 25% 并压暗到 0.5;
+    // 返回 = 目标页自左 25% 滑回并从 0.5 恢复 + 出栈页全宽滑出 (不淡出);
+    // 整个 AnimationSet 共用弹簧插值器 (response 0.8 / damping 0.95), 时长 500ms。
+    //
+    // 不读主题 windowAnimationStyle 的转场动画资源: 澎湃的转场在 system_server 里用代码
+    // 构造, framework-res 的 Animation.Activity 及全部 RRO overlay 仍是 AOSP 原版
+    // (96dp 位移 / 450ms), 读资源只能得到 AOSP 观感而非本机系统观感。
+    //
+    // 时长运行时动态读系统动画时长缩放 (Settings.Global ANIMATOR_DURATION_SCALE ×
+    // TRANSITION_ANIMATION_SCALE 取小值: 任一关闭即关闭转场动画, 尊重用户"动画时长缩放"
+    // 设置, >1 时与系统一致放慢); 对话框沿用系统 dialog 动画资源规范 200ms/150ms。
+
+    /** 系统动画时长缩放 (ANIMATOR_DURATION_SCALE × TRANSITION_ANIMATION_SCALE 取小值, 读取失败回退 1f) */
+    private fun systemAnimationScale(): Float {
+        return runCatching {
+            val resolver = activity.contentResolver
+            val animatorScale = Settings.Global.getFloat(
+                resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f
+            )
+            val transitionScale = Settings.Global.getFloat(
+                resolver, Settings.Global.TRANSITION_ANIMATION_SCALE, 1f
+            )
+            minOf(animatorScale, transitionScale)
+        }.getOrDefault(1f)
+    }
+
+    /**
+     * 屏幕圆角半径 px, 逐字复刻 AppTransitionInjector.initDisplayRoundCorner:
+     * 取四角中非零者的最小值 (minRadius 忽略 0 的角), 取不到或全 0 时回退 60px。
+     * 不缓存: 折叠屏切换屏幕后半径会变, 每次读 spec 时重取 (取值来自 DisplayInfo, 很廉价)。
+     */
+    private fun displayCornerRadiusPx(): Float {
+        val fallback = 60f
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return fallback
+        val display = activity.display ?: return fallback
+        val radii = intArrayOf(
+            RoundedCorner.POSITION_TOP_LEFT,
+            RoundedCorner.POSITION_TOP_RIGHT,
+            RoundedCorner.POSITION_BOTTOM_RIGHT,
+            RoundedCorner.POSITION_BOTTOM_LEFT,
+        ).map { display.getRoundedCorner(it)?.radius?.toFloat() ?: 0f }
+        val min = radii.filter { it > 0f }.minOrNull() ?: return fallback
+        return min
+    }
+
+    override val routeTransitionSpec: RouteTransitionSpec
+        get() {
+            val scale = systemAnimationScale()
+            val duration = (500 * scale).toInt()
+            return RouteTransitionSpec(
+                pushDurationMillis = duration,
+                pushEasing = MiuiActivityTransitionEasing,
+                newPageSlideFraction = 1f, // 新页全宽滑入
+                oldPageShiftFraction = 0.25f, // 旧页左移 25%
+                newPageFadeIn = false, // 新页不淡入 (AlphaAnimation(1,1))
+                oldPageFadeOut = false, // 旧页走压暗蒙版而非淡出
+                newPageScaleFrom = 1f,
+                popDurationMillis = duration,
+                popEasing = MiuiActivityTransitionEasing,
+                targetPageSlideFraction = 0.25f, // 目标页自左 25% 滑回
+                outgoingSlideFraction = 1f, // 出栈页全宽滑出
+                targetPageFadeIn = false,
+                outgoingFadeOut = false, // 出栈页不淡出 (AlphaAnimation(1,1))
+                targetPageScaleFrom = 1f,
+                underPageDimAlpha = 0.5f, // 旧页/目标页压暗到 0.5
+                pageCornerRadiusPx = displayCornerRadiusPx(), // setHasRoundedCorners 语义
+            )
+        }
+
+    override val dialogTransitionSpec: DialogTransitionSpec
+        get() {
+            val scale = systemAnimationScale()
+            return DialogTransitionSpec(
+                // 系统 dialog_enter.xml 200ms decelerate_quad 缩放 0.96→1+淡入 /
+                // dialog_exit.xml 150ms accelerate_quad 淡出, 时长 × 动画时长缩放
+                enterDurationMillis = (200 * scale).toInt(),
+                enterEasing = TransitionEasing.DecelerateQuad,
+                enterScaleFrom = 0.96f,
+                enterFadeIn = true,
+                exitDurationMillis = (150 * scale).toInt(),
+                exitEasing = TransitionEasing.AccelerateQuad,
+                exitFadeOut = true,
+            )
+        }
+
+    override fun exitApplication() {
+        activity.finish()
+    }
+
+    override fun openExternalUrl(url: String) {
+        activity.openUrl(url)
+    }
+
+    // 对照原版 OpenUrlConfirmDialog.openUrl: mimeType 非空时 setDataAndType 显式指定打开类型
+    override fun openExternalUrl(url: String, mimeType: String?) {
+        if (mimeType.isNullOrBlank()) {
+            activity.openUrl(url)
+            return
+        }
+        try {
+            val uri = url.toUri()
+            val targetIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (targetIntent.resolveActivity(App.instance.packageManager) != null) {
+                App.instance.startActivity(targetIntent)
+            } else {
+                App.instance.toastOnUi(androidAppString("can_not_open"))
+            }
+        } catch (e: Exception) {
+            AppLog.put("打开链接失败", e, true)
+        }
+    }
+
+    override fun openWebView(url: String, sourceKey: String, sourceName: String) {
+        // 移动端保留内嵌 WebViewRoute 路由语义 (对话框内嵌)
+        AppNavigatorProviders.get().push(
+            io.legado.app.ui.root.AppRoute.WebView(url, sourceKey, sourceName)
+        )
+    }
+
+    override fun shareText(text: String) {
+        activity.share(text)
+    }
+
+    /**
+     * 网页搜索 (对照原版 TextActionMenu.menu_browser): URL 直接 ACTION_VIEW,
+     * 非 URL 走 ACTION_WEB_SEARCH 交系统选择应用。
+     * 无浏览器/无应用响应属于设备环境条件 (非本端不变量被破坏), 故 toast 提示而非崩阅读页。
+     */
+    override fun searchWeb(text: String) {
+        runCatching {
+            val intent = if (text.isAbsUrl()) {
+                Intent(Intent.ACTION_VIEW).apply { data = text.toUri() }
+            } else {
+                Intent(Intent.ACTION_WEB_SEARCH).apply { putExtra(SearchManager.QUERY, text) }
+            }
+            activity.startActivity(intent)
+        }.onFailure {
+            it.printOnDebug()
+            activity.toastOnUi(it.localizedMessage ?: "ERROR")
+        }
+    }
+
+    // 按 bookUrl 查 DB 解析为 BookRef, 供 LaunchRequest.OpenBook/OpenBookInfo/OpenReader 路由导航
+    override suspend fun resolveBookRef(bookUrl: String): BookRef? =
+        appDb.bookDao.getBook(bookUrl)?.toRouteRef()
+
+    // 对照 ThemeConfig.applyDayNight
+    override fun applyDayNight() {
+        ThemeConfig.applyDayNight(activity)
+    }
+
+    // 对照 Context.sendToClip
+    override fun copyToClipboard(text: String) {
+        activity.sendToClip(text)
+    }
+
+    override fun getClipboardText(): String? = getClipText()
+
+    override fun readerBackgroundImageNames(): List<String> = RemoteAssetsUtils.getBgList()
+
+    override fun upLoadFile(
+        fileName: String,
+        file: Any,
+        contentType: String,
+        onResult: (String?) -> Unit
+    ) {
+        activity.lifecycleScope.launch(IO) {
+            runCatching {
+                DirectLinkUpload.upLoad(fileName, file, contentType)
+            }.onSuccess { url ->
+                withContext(kotlinx.coroutines.Dispatchers.Main) { onResult(url) }
+            }.onFailure { error ->
+                AppLog.put("上传文件失败\n${error.localizedMessage}", error)
+                activity.toastOnUi(error.localizedMessage ?: error.toString())
+                withContext(kotlinx.coroutines.Dispatchers.Main) { onResult(null) }
+            }
+        }
+    }
+
+    override fun testDirectLinkUpload(
+        rule: io.legado.app.help.DirectLinkUploadRule,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        activity.lifecycleScope.launch(IO) {
+            runCatching {
+                DirectLinkUpload.upLoad("test.json", "{}", "application/json", rule)
+            }.onSuccess { result ->
+                withContext(kotlinx.coroutines.Dispatchers.Main) { onSuccess(result) }
+            }.onFailure { error ->
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    onError(error.localizedMessage ?: error.toString())
+                }
+            }
+        }
+    }
+
+    // 起停走 Android Service 壳; 运行态/地址由 PlatformCapabilities 默认实现回读 WebServerManager
+    override fun setWebService(enabled: Boolean) {
+        if (enabled) WebService.start(activity) else WebService.stop(activity)
+    }
+
+    // 对照 BookInfoEditActivity.onChangeCoverSource + coverChangeTo
+    // 迁 Compose Overlay: 原 showDialogFragment(ChangeCoverDialog) 已由
+    // shared OverlayContentHost 的 "change_cover" key 接管 (payload="name\nauthor")
+    // 结果回调: overlayResults 返回 RouteResultPayload.ChangeCover(coverUrl)
+    override fun showChangeCoverDialog(book: Book, onCoverSelected: (String) -> Unit) {
+        val navigator = AppNavigatorProviders.get()
+        // 不带 IO: showOverlay 是 UI 操作, 必须主线程 (lifecycleScope 默认 Main.immediate),
+        // 同时保证"先入栈再收结果", 不会漏掉结果
+        activity.lifecycleScope.launch {
+            navigator.showOverlay(
+                AppOverlay.Dialog(
+                    "change_cover",
+                    payload = "${book.name}\n${book.author}"
+                )
+            )
+            // 等 Overlay 结果返回 (RouteResultPayload.ChangeCover);
+            // 用户取消关闭对话框时 payload=None 不 emit (见 AppNavigator.pop), first{} 会
+            // 永久挂起并把闭包留到 Activity 销毁, 故加超时兜底, 超时按"用户取消"处理
+            val result = withTimeoutOrNull(OVERLAY_RESULT_TIMEOUT_MS) {
+                navigator.overlayResults.first { it.key == "change_cover" }
+            }
+            val payload = result?.payload
+            if (payload is io.legado.app.ui.root.RouteResultPayload.ChangeCover) {
+                onCoverSelected(payload.coverUrl)
+            }
+        }
+    }
+
+    // 评论: 经 shared Overlay 弹段评/书评列表 (对照 app 端 ReviewListDialog BottomSheetDialogFragment;
+    // shared ReviewListDialogHost 用 AppBottomSheetDialog 还原底部弹窗语义, payload 编码见 ReviewListDialogHost.kt)
+    override fun showReviewListDialog(
+        book: Book,
+        chapter: BookChapter?,
+        paragraphIndex: Int,
+        parentReview: Review?,
+    ): Boolean {
+        AppNavigatorProviders.get().showOverlay(
+            AppOverlay.Dialog(
+                key = "review_list",
+                payload = encodeReviewListDialogPayload(book, chapter, paragraphIndex, parentReview),
+            )
+        )
+        return true
+    }
+
+    // 迁 Compose Overlay: 原 app 端 DefaultCoverGalleryDialog Fragment 已随封面统一删除,
+    // 与其他端一致走 shared DefaultCoverGalleryDialogHost (payload "1"=夜间, 其余=日间)
+    override fun showDefaultCoverGallery(isNight: Boolean) {
+        val navigator = AppNavigatorProviders.get()
+        activity.lifecycleScope.launch {
+            navigator.showOverlay(
+                AppOverlay.Dialog(
+                    key = "default_cover_gallery",
+                    payload = if (isNight) "1" else "0",
+                )
+            )
+        }
+    }
+
+    // 图集列表缓存已下沉 BookCoverShared (raw 串记忆化自动失效), 仅需清 Drawable 解码缓存
+    override fun refreshDefaultCover() {
+        BookCover.evictDrawableCache()
+    }
+
+    // 对照 IntentHelp.openTTSSetting
+    override fun openTtsSettings() {
+        IntentHelp.openTTSSetting()
+    }
+
+    // 对照 ReadAloudConfigDialog 的"+"按钮/行编辑: showDialogFragment(HttpTtsEditDialog)
+    override fun showHttpTtsEditDialog(engine: HttpTTS?) {
+        if (engine == null) {
+            activity.showDialogFragment<HttpTtsEditDialog>()
+        } else {
+            activity.showDialogFragment(HttpTtsEditDialog(engine.id))
+        }
+    }
+
+    // 对照 app 端 FontSelectDialog.loadFontFiles: pref 字体目录 + externalFiles/font 合并去重排序
+    override suspend fun scanFontItems(): List<FontItem> = withContext(IO) {
+        val fontRegex = Regex("(?i).*\\.[ot]tf")
+        val items = arrayListOf<FontItem>()
+        val fontPath = AppConfig.fontFolder
+        if (!fontPath.isNullOrBlank()) {
+            runCatching {
+                if (fontPath.isContentScheme()) {
+                    // SAF 目录: 优先转真实路径 (对照原版 RealPathUtil 分支), 失败则扫 DocumentFile
+                    val realPath = RealPathUtil.getPath(activity, fontPath.toUri())
+                    if (realPath != null) {
+                        scanFontDir(items, File(realPath), fontRegex)
+                    } else {
+                        DocumentFile.fromTreeUri(activity, fontPath.toUri())?.listFiles()?.forEach {
+                            if (it.name?.matches(fontRegex) == true) {
+                                items.add(FontItem(it.uri.toString(), it.name.orEmpty()))
+                            }
+                        }
+                    }
+                } else {
+                    scanFontDir(items, File(fontPath), fontRegex)
+                }
+            }
+        }
+        // 对照 getLocalFonts: externalFiles/font
+        scanFontDir(items, File(FileUtils.getPath(App.instance.externalFiles, "font")), fontRegex)
+        // 对照 mergeFontItems: 同名去重 (先扫的 pref 目录优先) + 按名排序
+        items.distinctBy { it.name }.sortedBy { it.name }
+    }
+
+    private fun scanFontDir(items: MutableList<FontItem>, dir: File, fontRegex: Regex) {
+        if (!dir.isDirectory) return
+        dir.listFiles()?.forEach {
+            if (it.isFile && it.name.matches(fontRegex)) {
+                items.add(FontItem(it.absolutePath, it.name))
+            }
+        }
+    }
+
+    // 对照 ViewConfiguration.get(ctx).scaledTouchSlop
+    override fun getScaledTouchSlop(): Int =
+        ViewConfiguration.get(activity).scaledTouchSlop
+
+    // 对照 ImportBookActivity.onPickFolder / selectFolder.launch: 选完目录重建 rootDoc
+    override fun pickImportFolder() {
+        activity.pendingImportFolderCallback = {
+            importViewModel.subDocs.clear()
+            importViewModel.rootDoc = null
+            ensureRootDoc()
+        }
+        activity.launchImportFolderPicker()
+    }
+
+    override fun openImportFile(filePath: String) {
+        val uri = filePath.toUri()
+        activity.supportFragmentManager.commit {
+            add(
+                io.legado.app.ui.association.FileAssociationFragment(uri),
+                "FileAssociationFragment",
+            )
+        }
+    }
+
+    // 对照 ImportBookActivity.onScanFolder / scanFolder
+    override fun scanImportFolder() {
+        ensureRootDoc()
+        importViewModel.rootDoc?.let { doc ->
+            val lastDoc = importViewModel.subDocs.lastOrNull() ?: doc
+            importLoadingState.value = true
+            scanDocJob?.cancel()
+            scanDocJob = activity.lifecycleScope.launch(IO) {
+                try {
+                    importViewModel.scanDoc(lastDoc)
+                } finally {
+                    // 仅当前 job 收尾时清 loading (被新扫描替换的旧 job 不动状态)
+                    if (scanDocJob == kotlinx.coroutines.currentCoroutineContext()[Job]) {
+                        importLoadingState.value = false
+                    }
+                }
+            }
+        }
+    }
+
+    // ===== 导入书籍状态流 override (对照 ImportBookActivity 同名字段) =====
+
+    override fun importBookItems(): StateFlow<List<ImportFileItem>> = importItemsState
+
+    override fun importBookPath(): StateFlow<String?> = importPathState
+
+    override fun importBookLoading(): StateFlow<Boolean> = importLoadingState
+
+    override fun importBookEmptyMsgVisible(): StateFlow<Boolean> = importEmptyMsgState
+
+    // 对照 ImportBookActivity.onActivityCreated 内 initData: 设置 dataFlowStart + 启动收集。
+    // 目录初始化由 dataFlow 收集启动时的 dataFlowStart (ensureRootDoc) 触发, 保证只走一次
+    // (避免 initRootDoc 空路径分支重复弹选择器)
+    override fun initImportBookData() {
+        importItemsState
+    }
+
+    // 对照 ImportBookActivity.onAlertImportFileName / alertImportFileName
+    override fun alertImportFileName() {
+        activity.alert(androidAppString("import_file_name")) {
+            setMessage("使用js处理文件名变量src，将书名作者分别赋值到变量name author")
+            val getText = editTextView(hint = "js", text = AppConfig.bookImportFileName ?: "")
+            okButton {
+                AppConfig.bookImportFileName = getText()
+            }
+            cancelButton()
+        }
+    }
+
+    // 对照 ImportBookActivity.onAddSelectionToBookshelf / addSelectionToBookshelf
+    override fun addImportSelectionToBookshelf(
+        items: List<ImportFileItem>,
+        onComplete: () -> Unit
+    ) {
+        val books = items.mapNotNull { it as? ImportBook }.toHashSet()
+        if (books.isEmpty()) {
+            onComplete()
+            return
+        }
+        importViewModel.addToBookshelf(books) {
+            books.forEach { it.isOnBookShelf = true }
+            onComplete()
+        }
+    }
+
+    // 对照 ImportBookActivity.onSearchTextChange / viewModel.updateCallBackFlow
+    override fun updateImportBookFilter(key: String) {
+        importViewModel.updateCallBackFlow(key)
+    }
+
+    // 对照 ImportBookActivity.upSort: 更新 sort + 持久化 + 非扫描中重排当前列表
+    override fun updateImportBookSort(sort: Int) {
+        importViewModel.sort = sort
+        AppConfig.localBookImportSort = sort
+        if (scanDocJob?.isActive != true) {
+            importViewModel.dataCallback?.upAdapter()
+        }
+    }
+
+    // 对照 ImportBookActivity.onItemClick isDir 分支 / startRead
+    override fun openImportedBookReader(item: ImportFileItem) {
+        (item as? ImportBook)?.let { startRead(it.file) }
+    }
+
+    // 对照 ImportBookActivity.onItemClick isDir 分支 / nextDoc
+    override fun navigateImportDir(item: ImportFileItem) {
+        (item as? ImportBook)?.let { nextDoc(it.file) }
+    }
+
+    // 对照 ImportBookActivity.onItemClick isUpDir 分支 / goBackDir
+    override fun goBackImportDir() {
+        goBackDir()
+    }
+
+    // 对照原版 AboutFragment "crashLog" 分支 / showDialogFragment<CrashLogsDialog>
+    // 迁 Compose Overlay: 原 showDialogFragment<CrashLogsDialog>() 已由
+    // shared OverlayContentHost 的 "crash_logs" key 接管 (CrashLogsOverlayDialogContent
+    // 通过 CrashLogProvider 提供数据/读文件/清空/分享)
+    override fun showCrashLogs() {
+        AppNavigatorProviders.get().showOverlay(AppOverlay.Dialog("crash_logs"))
+    }
+
+    // 对照原版 AboutFragment.saveLog
+    override fun saveLog() {
+        saveLogInternal()
+    }
+
+    // 对照原版 AboutFragment.createHeapDump
+    override fun createHeapDump() {
+        createHeapDumpInternal()
+    }
+
+    // ===== 书籍详情页平台能力: 对照 BookInfoActivity 同名方法 =====
+
+    // 对照 BookInfoActivity.onShelfClick / deleteBook: 上架/下架, webFile 走下载导入
+    override fun toggleBookshelf(
+        book: Book,
+        inBookshelf: Boolean,
+        onComplete: (Boolean?) -> Unit,
+        onWaitDialog: (Boolean) -> Unit,
+        onAction: (String) -> Unit,
+    ) {
+        if (inBookshelf) {
+            deleteBook(book, onComplete)
+        } else if (book.isWebFile) {
+            // webFile: 弹下载导入选择框, 导入完成后标记已上架 (对照 onShelfClick isWebFile 分支)
+            handleWebFileRead(book, onWaitDialog, onAction) { onComplete(true) }
+        } else {
+            // 上架走 shared 统一核心 toggleBookshelfCore (对照原 addToBookshelf → Book.save),
+            // 与 desktop/iOS/ohos 一致, 避免各端维护多份拷贝
+            // onComplete 里调用方要做 pop/dispatch 等 UI 操作, 回主线程 (对照 delBook)
+            activity.lifecycleScope.launch(IO) {
+                runCatching { book.toggleBookshelfCore(false) }
+                    .onSuccess { activity.runOnUiThread { onComplete(it) } }
+                    .onFailure {
+                        AppLog.put("书架操作失败\n${it.message}", it)
+                        activity.runOnUiThread { onComplete(false) }
+                    }
+            }
+        }
+    }
+
+    // 对照 BookInfoActivity.deleteBook: 删除确认弹窗 (本地书带"删除源文件"勾选)
+    private fun deleteBook(book: Book, onComplete: (Boolean?) -> Unit) {
+        if (!AppConfig.bookInfoDeleteAlert) {
+            delBook(book, LocalConfig.deleteBookOriginal, onComplete)
+            return
+        }
+        activity.alert(title = androidAppString("draw"), message = androidAppString("sure_del")) {
+            val deleteFile = mutableStateOf(LocalConfig.deleteBookOriginal)
+            if (book.isLocal) {
+                customView {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = deleteFile.value,
+                                role = Role.Checkbox,
+                                onValueChange = { deleteFile.value = it },
+                            )
+                            .padding(horizontal = 24.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        AppCheckbox(checked = deleteFile.value, onCheckedChange = null)
+                        Text(
+                            rememberString("delete_book_file"),
+                            color = AppTheme.colors.primaryText
+                        )
+                    }
+                }
+            }
+            yesButton {
+                if (book.isLocal) LocalConfig.deleteBookOriginal = deleteFile.value
+                delBook(book, LocalConfig.deleteBookOriginal, onComplete)
+            }
+            noButton()
+        }
+    }
+
+    // 对照 BookInfoViewModel.delBook (BaseReadViewModel): 删章节/DB + 清缓存 + 本地书删原文件
+    private fun delBook(book: Book, deleteOriginal: Boolean, onComplete: (Boolean?) -> Unit) {
+        activity.lifecycleScope.launch(IO) {
+            runCatching {
+                // 删章节/删书/标记 notShelf/本地源文件走 shared 统一核心 delBookCore
+                book.delBookCore(deleteOriginal)
+                // 正文缓存
+                BookHelp.clearCache(book)
+                // 封面缓存 (对照 BaseReadViewModel.delBook; MultiDiskCache.remove 传裸 url 即双区双删)
+                runCatching {
+                    val cache = coil3.SingletonImageLoader.get(activity).diskCache
+                    book.coverUrl?.let { cache?.remove(it) }
+                }
+            }.onSuccess { activity.runOnUiThread { onComplete(null) } }
+                .onFailure {
+                    AppLog.put("删除书籍失败\n${it.message}", it)
+                    activity.runOnUiThread { onComplete(false) }
+                }
+        }
+    }
+
+    // 对照 BookInfoActivity.onSetBookVariable / book.showBookVariableDialog (需查源);
+    // VariableDialog 已下沉 shared: 经 bookVariable Overlay 弹出 (payload 编码见 VariableOverlayDialog.kt)
+    override fun showBookVariableDialog(book: Book) {
+        activity.lifecycleScope.launch(IO) {
+            val source = appDb.bookSourceDao.getBookSource(book.origin)
+            if (source != null) {
+                activity.runOnUiThread {
+                    AppNavigatorProviders.get().showOverlay(
+                        AppOverlay.Dialog(
+                            key = "bookVariable",
+                            payload = encodeBookVariableOverlayPayload(book, source),
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    // 对照 BookInfoActivity.onSetSourceVariable / source.showSourceVariableDialog (需查源);
+    // 查不到源 toast error_no_source (与原版一致), 查到时经 sourceVariable Overlay 弹出
+    override fun showSourceVariableDialog(book: Book) {
+        activity.lifecycleScope.launch(IO) {
+            val source = appDb.bookSourceDao.getBookSource(book.origin)
+            if (source == null) {
+                activity.toastOnUi(androidAppString("error_no_source"))
+                return@launch
+            }
+            activity.runOnUiThread {
+                AppNavigatorProviders.get().showOverlay(
+                    AppOverlay.Dialog(
+                        key = "sourceVariable",
+                        payload = encodeSourceVariableOverlayPayload(source),
+                    )
+                )
+            }
+        }
+    }
+
+    // 对照 BookInfoActivity.onDispatchIntroAction / source.evalJS (需查源)
+    override fun evalIntroAction(book: Book, js: String) {
+        val action = js.trim().ifEmpty { return }
+        activity.lifecycleScope.launch(IO) {
+            val source = appDb.bookSourceDao.getBookSource(book.origin)
+            if (source == null) {
+                activity.toastOnUi(androidAppString("error_no_source"))
+                return@launch
+            }
+            try {
+                source.evalJS(action) {
+                    this["book"] = book
+                }
+            } catch (e: Exception) {
+                activity.toastOnUi(e.localizedMessage ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    // ===== webFile 下载导入链路 (对照 BookInfoViewModel + BookInfoActivity) =====
+
+    // 对照 BookInfoActivity.uploadBook: 远端已有同名书时先确认, 否则误触会覆盖远端且无法撤销
+    override fun uploadBook(book: Book, success: (() -> Unit)?) {
+        if (book.getRemoteUrl() == null) {
+            doUploadBook(book, success)
+            return
+        }
+        activity.alert(
+            title = androidAppString("draw"),
+            message = androidAppString("sure_upload"),
+        ) {
+            okButton { doUploadBook(book, success) }
+            cancelButton()
+        }
+    }
+
+    // 对照 BookInfoViewModel.uploadBook
+    private fun doUploadBook(book: Book, success: (() -> Unit)?) {
+        activity.lifecycleScope.launch(IO) {
+            try {
+                val bookWebDav = AppWebDav.defaultBookWebDav
+                    ?: throw NoStackTraceException("未配置webDav")
+                bookWebDav.upload(book)
+                book.lastCheckTime = System.currentTimeMillis()
+                book.save()
+                activity.runOnUiThread {
+                    activity.toastOnUi("上传成功")
+                    success?.invoke()
+                }
+            } catch (e: Throwable) {
+                activity.toastOnUi(e.localizedMessage)
+            }
+        }
+    }
+
+    // 对照 BookInfoViewModel.downloadToLocal
+    override fun downloadBookToLocal(book: Book, success: (() -> Unit)?) {
+        activity.lifecycleScope.launch(IO) {
+            try {
+                FileBook.downloadRemoteBook(book)
+                activity.runOnUiThread {
+                    activity.toastOnUi("下载成功")
+                    success?.invoke()
+                }
+            } catch (e: Throwable) {
+                AppLog.put("下载远程书籍<${book.name}>失败", e, true)
+            }
+        }
+    }
+
+    // 对照 BookInfoActivity.onReadClick isWebFile 分支 + showWebFileDownloadAlert
+    override fun handleWebFileRead(
+        book: Book,
+        onWaitDialog: (Boolean) -> Unit,
+        onAction: (String) -> Unit,
+        onSuccess: ((Book) -> Unit)?,
+    ) {
+        activity.lifecycleScope.launch(IO) {
+            // 对照 BaseReadViewModel.loadWebFile: 从 downloadUrls + AnalyzeUrl 构建 webFile 列表
+            val source = if (book.origin != BookType.localTag) {
+                appDb.bookSourceDao.getBookSource(book.origin)
+            } else null
+            val webFiles = buildWebFiles(book, source)
+            activity.runOnUiThread {
+                if (webFiles.isEmpty()) {
+                    activity.toastOnUi("Unexpected webFileData")
+                    return@runOnUiThread
+                }
+                showWebFileDownloadAlert(book, webFiles, source, onWaitDialog, onAction, onSuccess)
+            }
+        }
+    }
+
+    // 对照 BaseReadViewModel.loadWebFile
+    private suspend fun buildWebFiles(
+        book: Book, source: BookSource?
+    ): List<FileBook.WebFile> {
+        val urls = book.downloadUrls ?: return emptyList()
+        val fileNameNoExtension = if (book.author.isBlank()) book.name
+        else "${book.name} 作者：${book.author}"
+        return urls.map {
+            val analyzeUrl =
+                AnalyzeUrl(it, source = source, coroutineContext = currentCoroutineContext())
+            val mFileName = UrlUtil.getFileName(analyzeUrl.url, analyzeUrl.headerMap)
+                ?: "$fileNameNoExtension.${analyzeUrl.type}"
+            FileBook.WebFile(it, mFileName)
+        }
+    }
+
+    // 对照 BookInfoActivity.showWebFileDownloadAlert
+    private fun showWebFileDownloadAlert(
+        book: Book,
+        webFiles: List<FileBook.WebFile>,
+        source: BookSource?,
+        onWaitDialog: (Boolean) -> Unit,
+        onAction: (String) -> Unit,
+        onSuccess: ((Book) -> Unit)?,
+    ) {
+        activity.selector(androidAppString("download_and_import_file"), webFiles) { _, webFile, _ ->
+            if (webFile.isSupported) {
+                importWebFile(book, webFile, onWaitDialog, onAction) { onSuccess?.invoke(it) }
+            } else if (webFile.isSupportDecompress) {
+                downloadWebFile(book, webFile, onWaitDialog, onAction) { path ->
+                    getArchiveFilesName(path) { fileNames ->
+                        if (fileNames.size == 1) {
+                            importBookFromArchive(
+                                path,
+                                fileNames[0],
+                                book,
+                                onWaitDialog
+                            ) { onSuccess?.invoke(it) }
+                        } else {
+                            showDecompressFileImportAlert(
+                                path,
+                                fileNames,
+                                book,
+                                onWaitDialog,
+                                onSuccess
+                            )
+                        }
+                    }
+                }
+            } else {
+                activity.alert(
+                    title = androidAppString("draw"),
+                    message = androidAppString("file_not_supported", webFile.name)
+                ) {
+                    neutralButton(androidAppString("open_fun")) {
+                        downloadWebFile(book, webFile, onWaitDialog, onAction) { path ->
+                            activity.openFileUri(path.toUri(), "*/*")
+                        }
+                    }
+                    noButton()
+                }
+            }
+        }
+    }
+
+    // 对照 BookInfoActivity.showDecompressFileImportAlert
+    private fun showDecompressFileImportAlert(
+        archiveFilePath: String,
+        fileNames: List<String>,
+        book: Book,
+        onWaitDialog: (Boolean) -> Unit,
+        onSuccess: ((Book) -> Unit)?,
+    ) {
+        if (fileNames.isEmpty()) {
+            activity.toastOnUi(androidAppString("unsupport_archivefile_entry"))
+            return
+        }
+        activity.selector(androidAppString("import_select_book"), fileNames) { _, name, _ ->
+            importBookFromArchive(
+                archiveFilePath,
+                name,
+                book,
+                onWaitDialog
+            ) { onSuccess?.invoke(it) }
+        }
+    }
+
+    // 对照 BookInfoViewModel.importWebFile
+    override fun importWebFile(
+        book: Book,
+        webFile: FileBook.WebFile,
+        onWaitDialog: (Boolean) -> Unit,
+        onAction: (String) -> Unit,
+        success: ((Book) -> Unit)?,
+    ) {
+        // 原版走 execute{}, 其 executeContext 默认 Dispatchers.Main, 故等待框/动作/成功
+        // 三类回调都在主线程; 这里统一 runOnUiThread 回主线程与原版对齐
+        activity.lifecycleScope.launch(IO) {
+            try {
+                activity.runOnUiThread { onWaitDialog(true) }
+                val source = appDb.bookSourceDao.getBookSource(book.origin)
+                val fileName = book.getExportFileName(webFile.suffix)
+                val uri = FileBook.saveBookFile(webFile.url, fileName, source)
+                val localBook = FileBook.importLocalFile(uri)
+                val merged = FileBook.mergeBook(localBook, book)
+                loadChapterListAndSave(merged)
+                activity.runOnUiThread { success?.invoke(merged) }
+            } catch (e: Throwable) {
+                when (e) {
+                    is InvalidBooksDirException -> activity.runOnUiThread {
+                        onAction("selectBooksDir")
+                    }
+
+                    else -> AppLog.put("ImportWebFileError\n${e.localizedMessage}", e, true)
+                }
+            } finally {
+                activity.runOnUiThread { onWaitDialog(false) }
+            }
+        }
+    }
+
+    // 对照 BookInfoViewModel.downloadWebFile
+    override fun downloadWebFile(
+        book: Book,
+        webFile: FileBook.WebFile,
+        onWaitDialog: (Boolean) -> Unit,
+        onAction: (String) -> Unit,
+        success: ((String) -> Unit)?,
+    ) {
+        activity.lifecycleScope.launch(IO) {
+            try {
+                activity.runOnUiThread { onWaitDialog(true) }
+                val source = appDb.bookSourceDao.getBookSource(book.origin)
+                val fileName = book.getExportFileName(webFile.suffix)
+                val uri = FileBook.saveBookFile(webFile.url, fileName, source)
+                activity.runOnUiThread { success?.invoke(uri.toString()) }
+            } catch (e: Throwable) {
+                when (e) {
+                    is InvalidBooksDirException -> activity.runOnUiThread {
+                        onAction("selectBooksDir")
+                    }
+
+                    else -> AppLog.put("DownloadWebFileError\n${e.localizedMessage}", e, true)
+                }
+            } finally {
+                activity.runOnUiThread { onWaitDialog(false) }
+            }
+        }
+    }
+
+    // 对照 BookInfoViewModel.getArchiveFilesName
+    override fun getArchiveFilesName(archiveFilePath: String, onSuccess: (List<String>) -> Unit) {
+        activity.lifecycleScope.launch(IO) {
+            try {
+                val names = ArchiveUtils.getArchiveFilesName(archiveFilePath.toUri()) {
+                    AppPattern.bookFileRegex.matches(it)
+                }
+                activity.runOnUiThread { onSuccess.invoke(names) }
+            } catch (e: Throwable) {
+                AppLog.put("getArchiveEntriesName Error:\n${e.localizedMessage}", e, true)
+            }
+        }
+    }
+
+    // 对照 BookInfoViewModel.importBookFromArchive
+    override fun importBookFromArchive(
+        archiveFilePath: String,
+        archiveEntryName: String,
+        book: Book,
+        onWaitDialog: (Boolean) -> Unit,
+        success: ((Book) -> Unit)?,
+    ) {
+        activity.lifecycleScope.launch(IO) {
+            try {
+                activity.runOnUiThread { onWaitDialog(true) }
+                val suffix = archiveEntryName.substringAfterLast(".")
+                val saveFileName = book.getExportFileName(suffix)
+                val books = FileBook.importFromArchive(archiveFilePath, saveFileName) {
+                    it.contains(archiveEntryName)
+                }
+                val imported = books.first()
+                val merged = FileBook.mergeBook(imported, book)
+                loadChapterListAndSave(merged)
+                activity.runOnUiThread { success?.invoke(merged) }
+            } catch (e: Throwable) {
+                AppLog.put("importArchiveBook Error\n${e.localizedMessage}", e, true)
+            } finally {
+                activity.runOnUiThread { onWaitDialog(false) }
+            }
+        }
+    }
+
+    // 对照 BookInfoViewModel.refreshWebDavBook
+    override suspend fun refreshWebDavBook(book: Book) {
+        val remoteUrl = book.getRemoteUrl() ?: return
+        val bookWebDav = AppWebDav.defaultBookWebDav
+            ?: throw NoStackTraceException("webDav没有配置")
+        val remoteBook = bookWebDav.getRemoteBook(remoteUrl)
+        if (remoteBook == null) {
+            book.origin = BookType.localTag
+            return
+        }
+        if (remoteBook.lastModify > book.lastCheckTime) {
+            val uri = bookWebDav.downloadRemoteBook(remoteBook).toUri()
+            book.bookUrl = if (uri.isContentScheme()) uri.toString() else uri.path!!
+            book.lastCheckTime = remoteBook.lastModify
+        }
+    }
+
+    // 对照 BaseReadViewModel.loadChapterList (本地书分支): FileBook.getChapterList + 入库
+    private suspend fun loadChapterListAndSave(book: Book) {
+        try {
+            val chapters = FileBook.getChapterList(book)
+            IntentData.chapterList = chapters
+            IntentData.book = book
+            book.removeType(BookType.notShelf)
+            // 先落书再删旧目录 (对照原版 loadChapterList: update(book) → delByBook → insert);
+            // 反序会让并发读书在删章后 update 前看到空目录
+            if (appDb.bookDao.has(book.bookUrl)) {
+                appDb.bookDao.update(book)
+            } else {
+                appDb.bookDao.insert(book)
+            }
+            appDb.bookChapterDao.delByBook(book.bookUrl)
+            appDb.bookChapterDao.insert(*chapters.toTypedArray())
+        } catch (e: Throwable) {
+            AppLog.put("LoadChapterListError\n${e.localizedMessage}", e, true)
+        }
+    }
+
+    // 对照 BookInfoActivity.upWordCount 内 FileDoc.fromFile(book.bookUrl).size
+    override suspend fun localBookFileSize(bookUrl: String): Long = withContext(IO) {
+        FileDoc.fromFile(bookUrl).size
+    }
+
+    // 对照 AppConst.appInfo.versionName
+    override fun getAppVersionName(): String? = AppConst.appInfo.versionName
+
+    // 对照 BookInfoActivity.Content 内 LocalConfiguration.current.orientation == ORIENTATION_LANDSCAPE
+    override fun isLandscape(): Boolean =
+        activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // 对照 ChapterProvider.upLayout 的 appCtx.isPad（"平板/横屏双页" auto 分支）
+    override fun isTablet(): Boolean = activity.isPad
+
+    // ===== 书架管理平台能力: 对照 BookshelfManageActivity 同名方法/状态 =====
+
+    // 对照 BookshelfManageActivity.exportUseReplace (AppConfig 读取)
+    override fun exportUseReplace(): Boolean = AppConfig.exportUseReplace
+
+    // 对照 BookshelfManageActivity.enableCustomExportChecked
+    override fun enableCustomExport(): Boolean = AppConfig.enableCustomExport
+
+    // 对照 BookshelfManageActivity.exportToWebDav
+    override fun exportToWebDav(): Boolean = AppConfig.exportToWebDav
+
+    // 对照 BookshelfManageActivity.toggleEnableReplace
+    override fun toggleExportUseReplace() {
+        AppConfig.exportUseReplace = !AppConfig.exportUseReplace
+    }
+
+    // 对照 BookshelfManageActivity.toggleCustomExport
+    override fun toggleCustomExport() {
+        AppConfig.enableCustomExport = !AppConfig.enableCustomExport
+    }
+
+    // 对照 BookshelfManageActivity.toggleExportWebDav
+    override fun toggleExportWebDav() {
+        AppConfig.exportToWebDav = !AppConfig.exportToWebDav
+    }
+
+    // 对照 BookshelfManageActivity.showExportConfig: 导出配置对话框
+    // (文件名/导出类型 txt|epub/字符集/不导出章节名, 复刻 dialog_export_config.xml)
+    override fun showExportConfig() {
+        val fileNameState = mutableStateOf(AppConfig.bookExportFileName.orEmpty())
+        val typeState = mutableIntStateOf(if (AppConfig.exportType == 1) 1 else 0)
+        val charsetState = mutableStateOf(AppConfig.exportCharset)
+        val noChapterNameState = mutableStateOf(AppConfig.exportNoChapterName)
+        activity.alert(androidAppString("export_config")) {
+            customView {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        androidAppString("export_file_name"),
+                        color = AppTheme.colors.primaryText,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                    AppTextField(
+                        value = fileNameState.value,
+                        onValueChange = { fileNameState.value = it },
+                        singleLine = true,
+                        textStyle = TextStyle(textAlign = TextAlign.Start),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        androidAppString("export_type"),
+                        color = AppTheme.colors.primaryText,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                    )
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .selectableGroup(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        listOf("txt" to 0, "epub" to 1).forEach { (label, value) ->
+                            Row(
+                                Modifier
+                                    .selectable(
+                                        selected = typeState.intValue == value,
+                                        role = Role.RadioButton,
+                                        onClick = { typeState.intValue = value },
+                                    )
+                                    .padding(top = 4.dp, end = 16.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                AppRadioButton(
+                                    selected = typeState.intValue == value,
+                                    onClick = null,
+                                )
+                                Text(label, color = AppTheme.colors.primaryText, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                    Text(
+                        androidAppString("export_charset"),
+                        color = AppTheme.colors.primaryText,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                    )
+                    AppAutoCompleteField(
+                        value = charsetState.value,
+                        onValueChange = { charsetState.value = it },
+                        label = "charset",
+                        values = AppConst.charsets,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = noChapterNameState.value,
+                                role = Role.Checkbox,
+                                onValueChange = { noChapterNameState.value = it },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AppCheckbox(
+                            checked = noChapterNameState.value,
+                            onCheckedChange = null,
+                        )
+                        Text(
+                            androidAppString("export_no_chapter_name"),
+                            color = AppTheme.colors.primaryText,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+            }
+            okButton {
+                AppConfig.bookExportFileName = fileNameState.value
+                AppConfig.exportType = if (typeState.intValue == 1) 1 else 0
+                AppConfig.exportCharset =
+                    charsetState.value.takeIf { it.isNotBlank() } ?: "UTF-8"
+                AppConfig.exportNoChapterName = noChapterNameState.value
+            }
+            cancelButton()
+        }
+    }
+
+    // 对照 BookshelfManageActivity.configExportSection: 自定义导出章节配置对话框
+    // (导出全部/自定义导出 + epub 文件名JS规则 + 分卷大小 + 章节范围, 复刻 dialog_select_section_export.xml)。
+    // 仅在导出到文件夹且 enableCustomExport 开启时弹出 (对照 exportDir 回调 value=="cache" 分支)。
+    override fun showExportSectionConfig(path: String, books: List<Book>) {
+        // 默认选中自定义导出 (对照 cbSelectExport.callOnClick())
+        val allState = mutableStateOf(false)
+        val customState = mutableStateOf(true)
+        val fileNameState = mutableStateOf(AppConfig.episodeExportFileName.orEmpty())
+        val sizeState = mutableStateOf("1")
+        val scopeState = mutableStateOf("")
+        // epub 文件名 JS 规则预览/校验提示 (对照 lyEtEpubFilename.helperText)
+        val fileNameHelper = mutableStateOf("")
+        // 章节范围错误 (对照 etInputScope.error)
+        val scopeError = mutableStateOf<String?>(null)
+        activity.alert(androidAppString("select_section_export")) {
+            customView {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(
+                            Modifier
+                                .weight(1f)
+                                .toggleable(
+                                    value = allState.value,
+                                    role = Role.Checkbox,
+                                    onValueChange = {
+                                        // 互斥: 选中导出全部时取消自定义导出并禁用自定义项 (对照 cbAllExport 回调)
+                                        allState.value = it
+                                        customState.value = !it
+                                        if (it) scopeError.value = null
+                                    },
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AppCheckbox(checked = allState.value, onCheckedChange = null)
+                            Text(
+                                androidAppString("export_all"),
+                                color = AppTheme.colors.primaryText,
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                        Row(
+                            Modifier
+                                .weight(1f)
+                                .toggleable(
+                                    value = customState.value,
+                                    role = Role.Checkbox,
+                                    onValueChange = {
+                                        customState.value = it
+                                        allState.value = !it
+                                    },
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AppCheckbox(checked = customState.value, onCheckedChange = null)
+                            Text(
+                                androidAppString("custom_export"),
+                                color = AppTheme.colors.primaryText,
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                    }
+                    // epub 文件名 JS 规则 (分卷, 对照 lyEtEpubFilename/etEpubFilename)
+                    Text(
+                        androidAppString("export_file_name"),
+                        color = AppTheme.colors.primaryText,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                    )
+                    AppTextField(
+                        value = fileNameState.value,
+                        onValueChange = { fileNameState.value = it },
+                        singleLine = true,
+                        enabled = customState.value,
+                        textStyle = TextStyle(textAlign = TextAlign.Start),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { focused ->
+                                // 失焦时校验并持久化 (对照 etEpubFilename 焦点监听)
+                                if (!focused.isFocused &&
+                                    tryParesExportFileName(fileNameState.value)
+                                ) {
+                                    AppConfig.episodeExportFileName = fileNameState.value
+                                }
+                            },
+                        trailingIcon = {
+                            // 解析示例按钮 (对照 lyEtEpubFilename 的 endIcon 点击)
+                            IconButton(onClick = {
+                                fileNameHelper.value =
+                                    if (tryParesExportFileName(fileNameState.value)) {
+                                        books.firstOrNull()?.let { book ->
+                                            androidAppString("result_analyzed") + ": " +
+                                                book.getExportFileName(
+                                                    "epub",
+                                                    1,
+                                                    fileNameState.value
+                                                )
+                                        } ?: androidAppString("result_analyzed")
+                                    } else {
+                                        "Error"
+                                    }
+                            }) {
+                                Icon(
+                                    painter = rememberPainter("ic_play_24dp"),
+                                    contentDescription = "Execute script",
+                                    tint = AppTheme.colors.primaryText,
+                                )
+                            }
+                        },
+                    )
+                    Text(
+                        "Variable: name, author, epubIndex",
+                        color = AppTheme.colors.secondaryText,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    if (fileNameHelper.value.isNotEmpty()) {
+                        Text(
+                            fileNameHelper.value,
+                            color = AppTheme.colors.secondaryText,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                    // 分卷大小 (对照 lyEtEpubSize/etEpubSize)
+                    AppTextField(
+                        value = sizeState.value,
+                        onValueChange = { new ->
+                            if (new.length <= 6 && new.all { it.isDigit() }) sizeState.value = new
+                        },
+                        singleLine = true,
+                        enabled = customState.value,
+                        label = androidAppString("file_contains_number"),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = TextStyle(textAlign = TextAlign.Start),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // 章节范围 (对照 lyEtInputScope/etInputScope, 占位提示 "1-5,8,10-18")
+                    AppTextField(
+                        value = scopeState.value,
+                        onValueChange = {
+                            scopeState.value = it
+                            scopeError.value = null
+                        },
+                        singleLine = true,
+                        enabled = customState.value,
+                        label = androidAppString("export_chapter_index"),
+                        placeholder = "1-5,8,10-18",
+                        isError = scopeError.value != null,
+                        textStyle = TextStyle(textAlign = TextAlign.Start),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    scopeError.value?.let {
+                        Text(
+                            it,
+                            color = Color(0xFFE53935),
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                }
+            }
+            // 校验保留型确认: 范围非法时对话框不关闭 (对照 getButton(POSITIVE) 手动 hide 语义)
+            positiveButtonRetain(androidAppString("ok")) {
+                if (allState.value) {
+                    activity.startExportBooks(path, books)
+                    true
+                } else {
+                    val scopeText = scopeState.value.trim()
+                    if (!verificationField(scopeText)) {
+                        scopeError.value = androidAppString("error_scope_input")
+                        false
+                    } else {
+                        val epubSize = sizeState.value.toIntOrNull() ?: 1
+                        activity.startExportBooksCustom(path, books, epubSize, scopeText)
+                        true
+                    }
+                }
+            }
+            cancelButton()
+        }
+    }
+
+    // 对照 LocalConfig.deleteBookOriginal 读取
+    override fun getDeleteBookOriginal(): Boolean = LocalConfig.deleteBookOriginal
+
+    // 对照 LocalConfig.deleteBookOriginal 赋值
+    override fun setDeleteBookOriginal(value: Boolean) {
+        LocalConfig.deleteBookOriginal = value
+    }
+
+    // 对照 BookshelfManageActivity.exportAllUseBookSource / viewModel.saveAllUseBookSourceToFile
+    override fun exportAllUseBookSource() {
+        Coroutine.async {
+            val path = "${App.instance.filesDir}/shareBookSource.json"
+            FileUtils.delete(path)
+            val file = FileUtils.createFileWithReplace(path)
+            val sources = appDb.bookDao.getAllUseBookSource()
+            file.outputStream().buffered().use {
+                GSON.writeToOutputStream(it, sources)
+            }
+            file
+        }.onSuccess { file ->
+            activity.launchExportDir("bookSource.json", file, "application/json")
+        }.onError {
+            activity.toastOnUi(it.stackTraceStr)
+        }
+    }
+
+    // 对照 BookshelfManageActivity.exportAll
+    override fun exportAllBooks(books: List<Book>) {
+        val path = ACache.get().getAsString("exportBookPath")
+        if (path.isNullOrEmpty()) {
+            selectExportFolder(books)
+        } else {
+            activity.startExportBooks(path, books)
+        }
+    }
+
+    // 对照 BookshelfManageActivity.exportBookshelf / viewModel.exportBookshelf
+    @OptIn(ExperimentalSerializationApi::class)
+    override fun exportBookshelf(books: List<Book>) {
+        Coroutine.async {
+            if (books.isEmpty()) throw NoStackTraceException("书籍不能为空")
+            val path = "${App.instance.filesDir}/bookshelf.json"
+            FileUtils.delete(path)
+            val file = FileUtils.createFileWithReplace(path)
+            // 对齐原 GSON 行为: prettyPrint + 2 空格缩进 + 不序列化 null 字段
+            // 字段清单/映射下沉 shared commonMain Book.toShelfJsonMap (13 字段, 与 iOS/desktop/鸿蒙一致)
+            val json = Json { prettyPrint = true; prettyPrintIndent = "  " }
+            val jsonArray = buildJsonArray {
+                books.forEach { book ->
+                    add(buildJsonObject {
+                        book.toShelfJsonMap().forEach { (key, value) ->
+                            // buildMap 保插入序, 字段顺序与原逐字段 put 完全一致; null 已被映射跳过
+                            when (value) {
+                                is String -> put(key, value)
+                                is Number -> put(key, value)
+                                is Boolean -> put(key, value)
+                                is JsonElement -> put(key, value)
+                                else -> Unit
+                            }
+                        }
+                    })
+                }
+            }
+            FileOutputStream(file).use { out ->
+                out.write(
+                    json.encodeToString(JsonArray.serializer(), jsonArray)
+                        .toByteArray(Charsets.UTF_8)
+                )
+            }
+            file
+        }.onSuccess { file ->
+            activity.launchExportDir("bookshelf.json", file, "application/json")
+        }.onError {
+            activity.toastOnUi("导出书籍出错\n${it.localizedMessage}")
+        }
+    }
+
+    // 对照 BookshelfManageActivity.selectExportFolder
+    override fun selectExportFolder(books: List<Book>) {
+        val path = ACache.get().getAsString("exportBookPath")
+        activity.pendingExportBooks = books
+        activity.launchExportFolderPicker(path)
+    }
+
+    // ===== 书源管理平台能力: 对照 BookSourceActivity 同名方法 =====
+
+    // 对照 BookSourceActivity.addBookSource: 新建书源走导航 push BookSourceEdit (sourceUrl 空串表新建)
+    override fun addBookSource() {
+        AppNavigatorProviders.get().push(AppRoute.BookSourceEdit(""))
+    }
+
+    // 对照 BookSourceActivity.cancelCheckSource (CheckSource.stop + Debug.finishChecking)
+    override fun cancelCheckSource() {
+        CheckSource.stop(activity)
+        Debug.finishChecking()
+    }
+
+    // 书源管理复用 app 端 BookSourceViewModel (组合委托 BookSourceViewModelShared: 16 个 DAO 方法下沉)
+    private val bookSourceViewModel by lazy {
+        ViewModelProvider(activity).get(BookSourceViewModel::class.java)
+    }
+
+    // 对照 BookSourceActivity.selectionAddToGroups: alert 输入分组名后批量加入
+    override fun selectionAddToGroups(selection: List<BookSourcePart>) {
+        if (selection.isEmpty()) return
+        val groups = runBlocking { appDb.bookSourceDao.flowGroups().first() }
+        activity.alert(androidAppString("add_group")) {
+            val getGroup = editTextView(
+                hint = androidAppString("group_name"),
+                filterValues = groups,
+            )
+            okButton {
+                getGroup().takeIf { it.isNotEmpty() }?.let {
+                    bookSourceViewModel.selectionAddToGroups(selection, it)
+                }
+            }
+            cancelButton()
+        }
+    }
+
+    // 对照 BookSourceActivity.selectionRemoveFromGroups: alert 输入分组名后批量移出
+    override fun selectionRemoveFromGroups(selection: List<BookSourcePart>) {
+        if (selection.isEmpty()) return
+        val groups = runBlocking { appDb.bookSourceDao.flowGroups().first() }
+        activity.alert(androidAppString("remove_group")) {
+            val getGroup = editTextView(
+                hint = androidAppString("group_name"),
+                filterValues = groups,
+            )
+            okButton {
+                getGroup().takeIf { it.isNotEmpty() }?.let {
+                    bookSourceViewModel.selectionRemoveFromGroups(selection, it)
+                }
+            }
+            cancelButton()
+        }
+    }
+
+    // 对照 BookSourceActivity.menu_export_selection: saveToFile + EXPORT 文件选择器
+    override fun exportBookSourceSelection(
+        selection: List<BookSourcePart>,
+        allCount: Int,
+        sortAscending: Boolean,
+        sort: BookSourceSort
+    ) {
+        if (selection.isEmpty()) return
+        bookSourceViewModel.saveToFile(
+            selection = selection,
+            allCount = allCount,
+            sortAscending = sortAscending,
+            sort = sort,
+        ) { file ->
+            activity.launchExportDir("bookSource.json", file, "application/json")
+        }
+    }
+
+    // 对照 BookSourceActivity.menu_share_source: saveToFile + share
+    // 传当前 sort 不一致
+    override fun shareBookSourceSelection(
+        selection: List<BookSourcePart>,
+        allCount: Int,
+        sortAscending: Boolean,
+        sort: BookSourceSort
+    ) {
+        if (selection.isEmpty()) return
+        bookSourceViewModel.saveToFile(
+            selection = selection,
+            allCount = allCount,
+            sortAscending = sortAscending,
+            sort = sort,
+        ) { file ->
+            activity.share(file, title = androidAppString("share_selected_source"))
+        }
+    }
+
+    // 对照 BookSourceActivity.checkSource: alert 输入关键词 + CheckSource.start
+    override fun checkBookSource(selection: List<BookSourcePart>) {
+        if (selection.isEmpty()) return
+        activity.alert(androidAppString("search_book_key")) {
+            val getKey = editTextView(hint = "search word", text = CheckSource.keyword)
+            okButton {
+                // 校验期间的亮屏由 shared BookSourceManageRoute 按 Debug.checkState.isChecking
+                // 统一驱动 (四端一处接线), 此处不再各自开关
+                getKey().takeIf { it.isNotEmpty() }?.let { CheckSource.keyword = it }
+                CheckSource.start(activity, selection)
+                val firstItem = selection.firstOrNull()
+                val lastItem = selection.lastOrNull()
+                Debug.isChecking = firstItem != null && lastItem != null
+                // 校验进度由 BookSourceManageRoute 收集 EventBus.CHECK_SOURCE 驱动,
+                // 不再需要原版 adapter 轮询刷新 (startCheckMessageRefreshJob)
+            }
+            // 对照原版 getButton(BUTTON_NEUTRAL) 手动监听: 打开校验设置且不关闭输入框
+            neutralButtonRetain(androidAppString("check_source_config")) {
+                AppNavigatorProviders.get()
+                    .showOverlay(AppOverlay.Dialog("check_source_config"))
+            }
+            cancelButton()
+        }
+    }
+
+    // 对照 BookSourceActivity.resumeCheckSource: 校验中重进书源管理页时让 Service 重发一次
+    // 进度事件 (IntentAction.resume → upNotification → postEvent(CHECK_SOURCE)) 点亮进度条。
+    // 亮屏由 shared 路由按 Debug.checkState.isChecking 统一驱动, 本方法不再单独开关。
+    // "是否校验中" 由路由按 Debug.isChecking 判定 (对照原版 if (!Debug.isChecking) return)
+    override fun resumeCheckSource() {
+        CheckSource.resume(activity)
+    }
+
+    // ===== 书源编辑平台能力: 对照 BookSourceEditActivity 同名方法 =====
+
+    // 对照 BookSourceEditActivity.setSourceVariable / source.showSourceVariableDialog (route 已先 save);
+    // VariableDialog 已下沉 shared: 经 sourceVariable Overlay 弹出
+    override fun showBookSourceVariableDialog(source: BookSource) {
+        AppNavigatorProviders.get().showOverlay(
+            AppOverlay.Dialog(
+                key = "sourceVariable",
+                payload = encodeSourceVariableOverlayPayload(source),
+            )
+        )
+    }
+
+    // ===== 主题设置弹窗平台能力: 对照 ThemeConfigFragment 同名方法 =====
+
+    // 对照 ThemeConfigFragment: "themeList" -> ThemeListDialog().show(childFragmentManager, "themeList")
+// ThemeListDialog 应用主题后内部已 postEvent(RECREATE) 刷新, 无需额外处理
+// 迁 Compose Overlay: 原 showDialogFragment(ThemeListDialog()) 已由
+// shared OverlayContentHost 的 "theme_list" key 接管 (ThemeListOverlayDialogContent
+// 通过 ThemeConfigProviders 获取数据, 编辑/新建委托 showThemeCustomizeDialog)
+    override fun showThemeListDialog() {
+        AppNavigatorProviders.get().showOverlay(AppOverlay.Dialog("theme_list"))
+    }
+
+    // 主题自定义编辑 (对照 ThemeCustomizeDialog.editConfig / newConfig)
+// 仍走 Fragment (ThemeCustomizeDialog 未下沉 shared)
+    override fun showThemeCustomizeDialog(configIndex: Int?, isNight: Boolean) {
+        if (configIndex != null) {
+            ThemeCustomizeDialog.editConfig(configIndex)
+                .show(activity.supportFragmentManager, "themeCustomize")
+        } else {
+            ThemeCustomizeDialog.newConfig(isNight)
+                .show(activity.supportFragmentManager, "themeCustomize")
+        }
+    }
+
+    // 对照 ThemeConfigFragment: "customizeDayTheme" -> ThemeCustomizeDialog.editPrefs(false)
+    override fun showCustomizeDayThemeDialog() {
+        activity.showDialogFragment(ThemeCustomizeDialog.editPrefs(false))
+    }
+
+    // 对照 ThemeConfigFragment: "customizeNightTheme" -> ThemeCustomizeDialog.editPrefs(true)
+    override fun showCustomizeNightThemeDialog() {
+        activity.showDialogFragment(ThemeCustomizeDialog.editPrefs(true))
+    }
+
+    // 换桌面图标 (对照 master ThemeConfigFragment: launcherIcon -> LauncherIconHelp.changeIcon):
+    // setComponentEnabledSetting 切换 WelcomeActivity / Launcher1/4/5 的启用态, 桌面图标即变
+    override fun changeLauncherIcon(icon: String) {
+        LauncherIconHelp.changeIcon(icon)
+    }
+
+    override val launcherIconChangeSupported: Boolean get() = true
+
+    // AudioPlayService / WebService 用 MediaPlaybackLock 真持唤醒锁, 两个唤醒锁开关只在本端显示
+    override val wakeLockSupported: Boolean get() = true
+
+    // 以下几项均为安卓独有能力, 其余端无消费方 (其他设置里相应条目自动隐藏)
+    // Cronet: App.onCreate registerAndroidCronetProvider 注册了 CronetProvider
+    override val cronetSupported: Boolean get() = true
+
+    // 语言: AppContextWrapper.wrap 包 Context (attachBaseContext), 改完重启生效
+    override val languageSwitchSupported: Boolean get() = true
+
+    // 对照原版 OtherConfigFragment 的 PreferKey.language -> appCtx.restart()
+    override fun applyAppLanguage() {
+        App.instance.restart()
+    }
+
+    // 媒体按键: MediaButtonReceiver 读 mediaButtonOnExit / readAloudByMediaButton
+    override val mediaButtonSupported: Boolean get() = true
+
+    // 音频焦点: AudioFocusController 真抢焦点 (ignoreAudioFocus 短路它)
+    override val audioFocusSupported: Boolean get() = true
+
+    // 堆转储记录: CrashHandler 在 OOM 时读 recordHeapDump 决定要不要 doHeapDump
+    override val heapDumpRecordSupported: Boolean get() = true
+
+    // 文字操作菜单 (PROCESS_TEXT): 对应 manifest 里的 ProcessTextActivity activity-alias
+    override val processTextSupported: Boolean get() = true
+
+    /**
+     * 读文字操作菜单开启态, 逐字对照原版 OtherConfigFragment.isProcessTextEnabled:
+     * 读 alias 组件启用态而非读 pref —— 用户可能在系统设置里改过。
+     * DEFAULT 态 (从未手动改过) 按 manifest 的 exported=true 算开启, 所以只排 DISABLED。
+     */
+    override fun isProcessTextEnabled(): Boolean =
+        activity.packageManager.getComponentEnabledSetting(processTextComponent) !=
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+
+    /** 对照原版 setProcessTextEnable: setComponentEnabledSetting 切 alias 启用态。 */
+    override fun setProcessTextEnabled(enabled: Boolean) {
+        activity.packageManager.setComponentEnabledSetting(
+            processTextComponent,
+            if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+    }
+
+    /** PROCESS_TEXT activity-alias (对照原版 OtherConfigFragment.componentName)。 */
+    private val processTextComponent by lazy {
+        ComponentName(App.instance, "io.legado.app.ui.association.ProcessTextActivity")
+    }
+
+    // 底栏业务状态/UI 统一由 shared controller 托管，Android 仅负责 Overlay 宿主适配。
+    override fun showBottomNavConfigDialog() {
+        AppNavigatorProviders.get().showOverlay(AppOverlay.Dialog("bottom_nav_config"))
+    }
+
+    // 对照 ThemeConfigFragment.configBookshelf: 书架布局配置对话框 (dialog_bookshelf_config.xml Compose 重建)
+    override fun showBookshelfLayoutDialog() {
+        val bookshelfLayout = AppConfig.bookshelfLayout
+        // 校验态 (对照原版 spGroupStyle 越界回 0 / rgSort 越界回 0, 并回写 pref)
+        var initGroupStyle = AppConfig.bookGroupStyle
+        if (initGroupStyle !in 0..1) {
+            initGroupStyle = 0
+            AppConfig.bookGroupStyle = 0
+        }
+        var initSort = AppConfig.bookshelfSort
+        if (initSort !in 0..5) {
+            initSort = 0
+            AppConfig.bookshelfSort = 0
+        }
+        val groupStyle = mutableIntStateOf(initGroupStyle)
+        val bookshelfSort = mutableIntStateOf(initSort)
+        val fixedWidthMode = mutableStateOf(AppConfig.bookshelfFixedWidthMode)
+        val gridWidthText = mutableStateOf(AppConfig.bookshelfGridWidth.toString())
+        val introLines = mutableIntStateOf(AppConfig.bookshelfListIntroLines)
+        val selectedCols = mutableIntStateOf(BookSource.exploreStyleCols(bookshelfLayout))
+        val isVideo = mutableStateOf(BookSource.exploreStyleIsVideo(bookshelfLayout))
+        val showUnread = mutableStateOf(AppConfig.showUnread)
+        val showLastUpdateTime = mutableStateOf(AppConfig.showLastUpdateTime)
+        val showGroupCount = mutableStateOf(AppConfig.bookshelfShowGroupCount)
+        val showKind = mutableStateOf(AppConfig.bookshelfListShowKind)
+        val showIntro = mutableStateOf(AppConfig.bookshelfListShowIntro)
+
+        activity.alert(title = androidAppString("bookshelf_layout")) {
+            customView {
+                BookshelfLayoutConfigContent(
+                    groupStyle = groupStyle,
+                    bookshelfSort = bookshelfSort,
+                    fixedWidthMode = fixedWidthMode,
+                    gridWidthText = gridWidthText,
+                    introLines = introLines,
+                    selectedCols = selectedCols,
+                    isVideo = isVideo,
+                    showUnread = showUnread,
+                    showLastUpdateTime = showLastUpdateTime,
+                    showGroupCount = showGroupCount,
+                    showKind = showKind,
+                    showIntro = showIntro,
+                )
+            }
+            okButton {
+                var notifyMain = false
+                var recreate = false
+                if (AppConfig.bookGroupStyle != groupStyle.intValue) {
+                    AppConfig.bookGroupStyle = groupStyle.intValue
+                    notifyMain = true
+                }
+                if (AppConfig.showUnread != showUnread.value) {
+                    AppConfig.showUnread = showUnread.value
+                    postEvent(EventBus.BOOKSHELF_REFRESH, "")
+                }
+                if (AppConfig.showLastUpdateTime != showLastUpdateTime.value) {
+                    AppConfig.showLastUpdateTime = showLastUpdateTime.value
+                    postEvent(EventBus.BOOKSHELF_REFRESH, "")
+                }
+                if (AppConfig.bookshelfShowGroupCount != showGroupCount.value) {
+                    AppConfig.bookshelfShowGroupCount = showGroupCount.value
+                    postEvent(EventBus.BOOKSHELF_REFRESH, "")
+                }
+                if (AppConfig.bookshelfListShowKind != showKind.value) {
+                    AppConfig.bookshelfListShowKind = showKind.value
+                    postEvent(EventBus.BOOKSHELF_REFRESH, "")
+                }
+                if (AppConfig.bookshelfListShowIntro != showIntro.value) {
+                    AppConfig.bookshelfListShowIntro = showIntro.value
+                    postEvent(EventBus.BOOKSHELF_REFRESH, "")
+                }
+                if (AppConfig.bookshelfListIntroLines != introLines.intValue) {
+                    AppConfig.bookshelfListIntroLines = introLines.intValue
+                    postEvent(EventBus.BOOKSHELF_REFRESH, "")
+                }
+                if (AppConfig.bookshelfSort != bookshelfSort.intValue) {
+                    AppConfig.bookshelfSort = bookshelfSort.intValue
+                    // 排序变更走 BOOKSHELF_REFRESH 重建 flow (对照 BookshelfScreen2 sortTick 契约)
+                    postEvent(EventBus.BOOKSHELF_REFRESH, "")
+                }
+                // 对照原版 makeLayoutStyle: 视频置 EXPLORE_STYLE_VIDEO_FLAG, 列数取低 3 位
+                val newLayout =
+                    (if (isVideo.value) BookSource.EXPLORE_STYLE_VIDEO_FLAG else 0) or
+                        (selectedCols.intValue and BookSource.EXPLORE_STYLE_COLS_MASK)
+                val newGridWidth = gridWidthText.value.toIntOrNull() ?: 120
+                if (bookshelfLayout != newLayout ||
+                    AppConfig.bookshelfFixedWidthMode != fixedWidthMode.value ||
+                    AppConfig.bookshelfGridWidth != newGridWidth
+                ) {
+                    AppConfig.bookshelfLayout = newLayout
+                    AppConfig.bookshelfFixedWidthMode = fixedWidthMode.value
+                    AppConfig.bookshelfGridWidth = newGridWidth
+                    recreate = true
+                }
+                if (recreate) {
+                    // 对照原版 recreateActivities: 布局变更重建界面
+                    postEvent(EventBus.RECREATE, "")
+                } else if (notifyMain) {
+                    postEvent(EventBus.NOTIFY_MAIN, false)
+                }
+            }
+            cancelButton()
+        }
+    }
+
+    // ===== 其它设置平台能力: 对照 OtherConfigHost 同名方法 =====
+
+    // 对照 OtherConfigHost.alertLocalPassword okButton: LocalConfig.password = getText()
+    override fun setLocalPassword(password: String?) {
+        LocalConfig.password = password
+    }
+
+    // 对照 OtherConfigHost.localBookTreeSelect.launch DIR_SYS, 回调由 MainActivity 桥接
+    override fun pickBookTreeUri(onSelected: (String?) -> Unit) {
+        activity.pendingBookTreeUriCallback = onSelected
+        activity.launchBookTreeUriPicker()
+    }
+
+    // 对照 OtherConfigHost.onCheckSource: showDialogFragment<CheckSourceConfig>
+    // 迁 Compose Overlay: 原 CheckSourceConfig() Fragment 已由
+    // shared OverlayContentHost 的 "check_source_config" key 接管
+    // onDismiss 回调: 监听 overlays 列表中 "check_source_config" 被移除
+    override fun showCheckSourceConfigDialog(onDismiss: () -> Unit) {
+        val navigator = AppNavigatorProviders.get()
+        // 先同步入栈 (showOverlay 是 UI 操作), 再等它从栈中移除即可:
+        // 原先在 IO 协程里先等"出现"再等"移除", 若对话框在协程被调度前就已关闭,
+        // 等"出现"永不满足, onDismiss 丢失且协程挂到 Activity 销毁
+        navigator.showOverlay(AppOverlay.Dialog("check_source_config"))
+        activity.lifecycleScope.launch {
+            navigator.overlays.first { it.none { o -> o.key == "check_source_config" } }
+            onDismiss()
+        }
+    }
+
+    // 对照 OtherConfigHost.onUploadRule: showDialogFragment<DirectLinkUploadConfig>
+    // 迁 Compose Overlay: 原 showDialogFragment<DirectLinkUploadConfig>() 已由
+    // shared OverlayContentHost 的 "direct_link_upload_config" key 接管
+    override fun showDirectLinkUploadConfigDialog() {
+        AppNavigatorProviders.get()
+            .showOverlay(AppOverlay.Dialog("direct_link_upload_config"))
+    }
+
+    // 对照 ConfigViewModel.clearWebViewData: 删 webview 目录 + toast + delay + restart
+    override fun clearWebViewData() {
+        Coroutine.async {
+            FileUtils.delete(activity.getDir("webview", Context.MODE_PRIVATE))
+            FileUtils.delete(activity.getDir("hws_webview", Context.MODE_PRIVATE), true)
+            activity.toastOnUi(androidAppString("clear_webview_data_success"))
+            delay(3000)
+            App.instance.restart()
+        }.onError {
+            AppLog.put("清理 WebView 数据失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    // ===== 导入书籍私有辅助: 复刻 ImportBookActivity 同名方法 =====
+
+    /** 首次访问导入相关方法时按 pref 初始化 rootDoc (对照 ImportBookActivity.initRootDoc) */
+    private fun ensureRootDoc() {
+        if (importViewModel.rootDoc != null) return
+        val lastPath = AppConfig.importBookPath
+        if (lastPath.isNullOrBlank()) {
+            // 对照 initRootDoc: 未设置目录时显示空态并弹选择器
+            importEmptyMsgState.value = true
+            activity.launchImportFolderPicker()
+            return
+        }
+        val rootUri = if (lastPath.isUri()) {
+            lastPath.toUri()
+        } else {
+            Uri.fromFile(File(lastPath))
+        }
+        kotlin.runCatching {
+            if (rootUri.isContentScheme()) {
+                androidx.documentfile.provider.DocumentFile.fromTreeUri(activity, rootUri)
+            } else {
+                androidx.documentfile.provider.DocumentFile.fromFile(File(rootUri.path!!))
+            }?.let { doc ->
+                if (!doc.name.isNullOrEmpty() && doc.isDirectory) {
+                    importViewModel.subDocs.clear()
+                    importViewModel.rootDoc = FileDoc.fromDocumentFile(doc)
+                }
+            }
+        }.onFailure {
+            importEmptyMsgState.value = true
+            activity.launchImportFolderPicker()
+        }
+    }
+
+    @Synchronized
+    private fun nextDoc(fileDoc: FileDoc) {
+        importViewModel.subDocs.add(fileDoc)
+        upPath()
+    }
+
+    @Synchronized
+    private fun goBackDir(): Boolean {
+        return if (importViewModel.subDocs.isNotEmpty()) {
+            importViewModel.subDocs.removeAt(importViewModel.subDocs.lastIndex)
+            upPath()
+            true
+        } else {
+            false
+        }
+    }
+
+    @Synchronized
+    private fun upPath() {
+        importViewModel.rootDoc?.let {
+            scanDocJob?.cancel()
+            upDocs(it)
+        }
+    }
+
+    private fun upDocs(rootDoc: FileDoc) {
+        // 对照 ImportBookActivity.upDocs: 拼面包屑路径 + 隐藏空态 + 加载目录
+        var lastDoc = rootDoc
+        var path = rootDoc.name + File.separator
+        for (doc in importViewModel.subDocs) {
+            lastDoc = doc
+            path = path + doc.name + File.separator
+        }
+        importPathState.value = path
+        importEmptyMsgState.value = false
+        importViewModel.loadDoc(lastDoc)
+    }
+
+    private fun startRead(fileDoc: FileDoc) {
+        // 原版 ImportBookActivity.startRead 在主线程直查 Room (allowMainThreadQueries);
+        // 迁移后 DAO 是挂起函数, 用 runBlocking 会真把主线程卡在 Room 执行器上,
+        // 改为协程内挂起查询, 后续 toast/selector/push 仍按原顺序在主线程执行
+        activity.lifecycleScope.launch {
+            if (ArchiveUtils.isArchive(fileDoc.name)) {
+                val fileNames = withContext(IO) {
+                    runCatching {
+                        ArchiveUtils.getArchiveFilesName(fileDoc) {
+                            AppPattern.bookFileRegex.matches(it)
+                        }
+                    }.getOrDefault(emptyList())
+                }
+                when {
+                    fileNames.isEmpty() -> activity.toastOnUi(androidAppString("unsupport_archivefile_entry"))
+                    fileNames.size == 1 -> openArchiveBook(fileDoc, fileNames.first())
+                    else -> activity.selector(
+                        androidAppString("start_read"),
+                        fileNames
+                    ) { _, name, _ ->
+                        openArchiveBook(fileDoc, name)
+                    }
+                }
+                return@launch
+            }
+            val book = withContext(IO) { appDb.bookDao.getBookByFileName(fileDoc.name) }
+                ?: return@launch
+            val filePath = fileDoc.toString()
+            if (book.bookUrl != filePath) {
+                book.bookUrl = filePath
+                withContext(IO) { appDb.bookDao.insert(book) }
+            }
+            AppNavigatorProviders.get().push(book.toReadRoute())
+        }
+    }
+
+    // 对照 RemoteBookActivity.startRead 的 archive 分支 + showRemoteBookDownloadAlert:
+    // 默认书籍目录里找已下载的压缩包, 没有就弹确认框由调用方重新下载后重试
+    override fun startReadRemoteArchive(fileName: String, onNeedDownload: () -> Unit) {
+        val treeUri = AppConfig.defaultBookTreeUri ?: return
+        val archiveDoc = FileDoc.fromUri(treeUri.toUri(), true).find(fileName)
+        if (archiveDoc == null) {
+            activity.alert(androidAppString("draw"), androidAppString("archive_not_found")) {
+                okButton { onNeedDownload() }
+                noButton()
+            }
+        } else {
+            startRead(archiveDoc)
+        }
+    }
+
+    private fun openArchiveBook(fileDoc: FileDoc, fileName: String) {
+        // 同 startRead: 查库走协程挂起, 不用 runBlocking 卡主线程
+        activity.lifecycleScope.launch {
+            val cached = withContext(IO) { appDb.bookDao.getBookByFileName(fileName) }
+            if (cached != null) {
+                AppNavigatorProviders.get().push(cached.toReadRoute())
+                return@launch
+            }
+            activity.alert(androidAppString("draw"), androidAppString("no_book_found_bookshelf")) {
+                okButton {
+                    activity.lifecycleScope.launch(IO) {
+                        val book = runCatching {
+                            FileBook.importFromArchive(fileDoc.uri, fileName) {
+                                it.contains(fileName)
+                            }
+                        }.getOrNull()?.firstOrNull()
+                        activity.runOnUiThread {
+                            book?.let { AppNavigatorProviders.get().push(it.toReadRoute()) }
+                        }
+                    }
+                }
+                noButton()
+            }
+        }
+    }
+
+    // ===== 关于页私有辅助: 复刻原版 AboutFragment 同名 private 方法 =====
+
+    private fun saveLogInternal() {
+        Coroutine.async {
+            val backupPath = AppConfig.backupPath ?: let {
+                App.instance.toastOnUi("未设置备份目录")
+                return@async
+            }
+            if (!AppConfig.recordLog) {
+                App.instance.toastOnUi("未开启日志记录，请去其他设置里打开记录日志")
+                delay(3000)
+            }
+            val doc = FileDoc.fromUri(backupPath.toUri(), true)
+            copyLogs(doc)
+            copyHeapDump(doc)
+            App.instance.toastOnUi("已保存至备份目录")
+        }.onError {
+            AppLog.put("保存日志出错\n${it.localizedMessage}", it, true)
+        }
+    }
+
+    private fun createHeapDumpInternal() {
+        Coroutine.async {
+            val backupPath = AppConfig.backupPath ?: let {
+                App.instance.toastOnUi("未设置备份目录")
+                return@async
+            }
+            if (!AppConfig.recordHeapDump) {
+                App.instance.toastOnUi("未开启堆转储记录，请去其他设置里打开记录堆转储")
+                delay(3000)
+            }
+            App.instance.toastOnUi("开始创建堆转储")
+            System.gc()
+            CrashHandler.doHeapDump(true)
+            val doc = FileDoc.fromUri(backupPath.toUri(), true)
+            if (!copyHeapDump(doc)) {
+                App.instance.toastOnUi("未找到堆转储文件")
+            } else {
+                App.instance.toastOnUi("已保存至备份目录")
+            }
+        }.onError {
+            AppLog.put("保存堆转储失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    private fun copyLogs(doc: FileDoc) {
+        val cacheDir = App.instance.externalCache
+        val logFiles = File(cacheDir, "logs")
+        val crashFiles = File(cacheDir, "crash")
+        val logcatFile = File(cacheDir, "logcat.txt")
+
+        dumpLogcat(logcatFile)
+
+        val zipFile = File(cacheDir, "logs.zip")
+        ZipUtils.zipFiles(arrayListOf(logFiles, crashFiles, logcatFile), zipFile)
+
+        doc.find("logs.zip")?.delete()
+
+        zipFile.inputStream().use { input ->
+            doc.createFileIfNotExist("logs.zip").openOutputStream().getOrNull()
+                ?.use {
+                    input.copyTo(it)
+                }
+        }
+        zipFile.delete()
+    }
+
+    private fun copyHeapDump(doc: FileDoc): Boolean {
+        val heapFile = FileDoc.fromFile(File(App.instance.externalCache, "heapDump")).list()
+            ?.firstOrNull() ?: return false
+        doc.find("heapDump")?.delete()
+        val heapDumpDoc = doc.createFolderIfNotExist("heapDump")
+        heapFile.openInputStream().getOrNull()?.use { input ->
+            heapDumpDoc.createFileIfNotExist(heapFile.name).openOutputStream().getOrNull()
+                ?.use {
+                    input.copyTo(it)
+                }
+        }
+        return true
+    }
+
+    private fun dumpLogcat(file: File) {
+        try {
+            val process = Runtime.getRuntime().exec("logcat -d")
+            file.outputStream().use {
+                process.inputStream.copyTo(it)
+            }
+        } catch (e: Exception) {
+            AppLog.put("保存Logcat失败\n$e", e)
+        }
+    }
+}
+
+/**
+ * 书架布局配置正文 (对照 dialog_bookshelf_config.xml Compose 重建)。
+ * 分组样式/样式/固定宽/列数/简介行数/排序等逐项等价; 列表模式专属项按 isList 显隐
+ * (对照原版 updateListOnlyVisibility: 非固定宽且列数 <= 1 视为列表)。
+ */
+@Composable
+private fun BookshelfLayoutConfigContent(
+    groupStyle: MutableState<Int>,
+    bookshelfSort: MutableState<Int>,
+    fixedWidthMode: MutableState<Boolean>,
+    gridWidthText: MutableState<String>,
+    introLines: MutableState<Int>,
+    selectedCols: MutableState<Int>,
+    isVideo: MutableState<Boolean>,
+    showUnread: MutableState<Boolean>,
+    showLastUpdateTime: MutableState<Boolean>,
+    showGroupCount: MutableState<Boolean>,
+    showKind: MutableState<Boolean>,
+    showIntro: MutableState<Boolean>,
+) {
+    val colors = AppTheme.colors
+    val context = LocalContext.current
+    val groupStyles = rememberStringArray("group_style")
+    val itemStyles = rememberStringArray("explore_item_style")
+    val sortLabels = arrayOf(
+        rememberString("bookshelf_px_0"), rememberString("bookshelf_px_1"), rememberString("bookshelf_px_2"),
+        rememberString("bookshelf_px_3"), rememberString("bookshelf_px_4"), rememberString("bookshelf_px_5"),
+    )
+    // 列表模式: 非固定宽且列数 <= 1 (对照原版 updateListOnlyVisibility)
+    val isList = !fixedWidthMode.value && selectedCols.value <= 1
+
+    Column(
+        Modifier
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+    ) {
+        ConfigDropdownRow(
+            label = rememberString("group_style"),
+            options = groupStyles,
+            selectedIndex = groupStyle.value,
+            onSelect = { groupStyle.value = it },
+        )
+        ConfigDropdownRow(
+            label = rememberString("explore_style"),
+            options = itemStyles,
+            selectedIndex = if (isVideo.value) 1 else 0,
+            onSelect = { isVideo.value = it == 1 },
+        )
+        ConfigSwitchRow(rememberString("show_unread"), showUnread.value) {
+            showUnread.value = it
+        }
+        ConfigSwitchRow(rememberString("bookshelf_show_group_count"), showGroupCount.value) {
+            showGroupCount.value = it
+        }
+        ConfigSwitchRow(rememberString("fixed_width_mode"), fixedWidthMode.value) {
+            fixedWidthMode.value = it
+        }
+        // 视图小节 (对照原版 tv_layout_title)
+        Text(
+            rememberString("view"),
+            color = colors.accent,
+            fontSize = 16.sp,
+            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+        )
+        // 列数 (对照原版 sb_column_count 0..6, 固定宽模式隐藏)
+        if (!fixedWidthMode.value) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    rememberString("column_count"),
+                    color = colors.primaryText,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                AppSlider(
+                    value = selectedCols.value,
+                    max = 6,
+                    onValueChange = { selectedCols.value = it },
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    selectedCols.value.toString(),
+                    color = colors.primaryText,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+        }
+        // 列表模式专属项
+        if (isList) {
+            ConfigSwitchRow(rememberString("bookshelf_list_show_kind"), showKind.value) {
+                showKind.value = it
+            }
+            ConfigSwitchRow(rememberString("bookshelf_list_show_intro"), showIntro.value) {
+                showIntro.value = it
+            }
+            // 简介行数 1..5 (对照原版 tv_intro_lines_minus/plus, 未开简介降透明度)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .alpha(if (showIntro.value) 1f else 0.4f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    rememberString("bookshelf_list_intro_lines"),
+                    color = colors.primaryText,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "-",
+                    color = colors.primaryText,
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clickable { if (introLines.value > 1) introLines.value-- },
+                )
+                Text(
+                    introLines.value.toString(),
+                    color = colors.primaryText,
+                    fontSize = 16.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.size(32.dp),
+                )
+                Text(
+                    "+",
+                    color = colors.primaryText,
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clickable { if (introLines.value < 5) introLines.value++ },
+                )
+            }
+            ConfigSwitchRow(
+                rememberString("show_last_update_time"),
+                showLastUpdateTime.value
+            ) {
+                showLastUpdateTime.value = it
+            }
+        }
+        // 固定宽模式: 网格宽度 dp (对照原版 ll_fixed_width / et_grid_width)
+        if (fixedWidthMode.value) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(rememberString("grid_width_dp"), color = colors.primaryText)
+                AppTextField(
+                    value = gridWidthText.value,
+                    onValueChange = { gridWidthText.value = it.filter { c -> c.isDigit() } },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    textStyle = TextStyle(textAlign = TextAlign.Center),
+                    modifier = Modifier.weight(1f),
+                )
+                Text("dp", color = colors.primaryText)
+            }
+        }
+        // 排序小节 (对照原版 rg_sort 6 项单选)
+        Text(
+            rememberString("sort"),
+            color = colors.accent,
+            fontSize = 16.sp,
+            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+        )
+        Column(Modifier.selectableGroup()) {
+            sortLabels.forEachIndexed { i, label ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = bookshelfSort.value == i,
+                            role = Role.RadioButton,
+                            onClick = { bookshelfSort.value = i },
+                        )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AppRadioButton(selected = bookshelfSort.value == i, onClick = null)
+                    Text(label, color = colors.primaryText, fontSize = 15.sp)
+                }
+            }
+        }
+    }
+}
+
+/** 标签 + 下拉单行 (对照原版 AppCompatSpinner 行) */
+@Composable
+private fun ConfigDropdownRow(
+    label: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    val colors = AppTheme.colors
+    val expanded = remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = colors.primaryText, modifier = Modifier.weight(1f))
+        Box {
+            Row(
+                Modifier
+                    .clickable { expanded.value = true }
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    options.getOrElse(selectedIndex) { "" },
+                    color = colors.primaryText,
+                    fontSize = 14.sp,
+                )
+                Icon(
+                    painter = rememberPainter("ic_arrow_drop_down"),
+                    contentDescription = null,
+                    tint = colors.secondaryText,
+                )
+            }
+            AppDropdownMenu(
+                expanded = expanded.value,
+                onDismissRequest = { expanded.value = false }) {
+                options.forEachIndexed { i, item ->
+                    DropdownMenuItem(onClick = { expanded.value = false; onSelect(i) }) {
+                        Text(item, color = colors.primaryText)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 标签 + 开关行 (对照原版 SwitchCompat 行) */
+@Composable
+private fun ConfigSwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = AppTheme.colors.primaryText, modifier = Modifier.weight(1f))
+        AppSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}

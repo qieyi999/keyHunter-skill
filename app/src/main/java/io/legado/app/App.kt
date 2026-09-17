@@ -1,0 +1,416 @@
+package io.legado.app
+
+import android.app.Application
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
+import android.content.res.Configuration
+import android.os.Build
+import io.legado.app.base.AppContextWrapper
+import io.legado.app.constant.AppConst.channelIdDownload
+import io.legado.app.constant.AppConst.channelIdReadAloud
+import io.legado.app.constant.AppConst.channelIdWeb
+import io.legado.app.constant.PreferKey
+import io.legado.app.constant.registerAndroidAppLogHost
+import io.legado.app.data.appDb
+import io.legado.app.help.AppFreezeMonitor
+import io.legado.app.help.AppWebDav
+import io.legado.app.help.CrashHandler
+import io.legado.app.help.DefaultData
+import io.legado.app.help.DispatchersMonitor
+import io.legado.app.help.LifecycleHelp
+import io.legado.app.help.archive.AndroidArchiveProvider
+import io.legado.app.help.archive.ArchiveProviders
+import io.legado.app.help.book.AndroidBookImageStorage
+import io.legado.app.help.book.AndroidBookStorage
+import io.legado.app.help.book.AndroidLocalBookLocator
+import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.BookImageStorageProviders
+import io.legado.app.help.book.BookStorageProviders
+import io.legado.app.help.book.LocalBookLocators
+import io.legado.app.help.config.AndroidReadConfigProviders
+import io.legado.app.help.config.AppConfig
+import io.legado.app.help.config.LocalConfig
+import io.legado.app.help.config.ReadBookConfig
+import io.legado.app.help.config.ReadBookConfigProviders
+import io.legado.app.help.config.ThemeConfig
+import io.legado.app.help.config.ThemeConfig.applyDayNight
+import io.legado.app.help.config.ThemeConfig.applyDayNightInit
+import io.legado.app.help.config.migrateLegacyHomeSp
+import io.legado.app.help.config.registerAndroidLocalConfigStore
+import io.legado.app.help.config.registerAndroidPreferenceProvider
+import io.legado.app.help.coroutine.Coroutine
+import io.legado.app.help.coroutine.registerAndroidDebugState
+import io.legado.app.help.file.registerAndroidAppFilesDir
+import io.legado.app.help.http.Cronet
+import io.legado.app.help.http.ObsoleteUrlFactory
+import io.legado.app.help.http.okHttpClient
+import io.legado.app.help.http.registerAndroidBackstageWebView
+import io.legado.app.help.http.registerAndroidCookieStoreProvider
+import io.legado.app.help.http.registerAndroidCronetProvider
+import io.legado.app.help.http.registerSharedCookieJarBridge
+import io.legado.app.help.i18n.androidAppString
+import io.legado.app.help.i18n.registerAndroidAppStringProvider
+import io.legado.app.help.i18n.warmAppStringCache
+import io.legado.app.help.image.registerAndroidBookImageLoader
+import io.legado.app.help.registerAndroidDirectLinkUploadProviders
+import io.legado.app.help.registerAndroidFileCacheProvider
+import io.legado.app.help.service.UpdateBookCallbacks
+import io.legado.app.help.service.registerAndroidServiceLauncher
+import io.legado.app.help.source.SourceHelp
+import io.legado.app.help.storage.Backup
+import io.legado.app.help.storage.registerAndroidBackupRestoreHook
+import io.legado.app.help.storage.registerAndroidPasswordProvider
+import io.legado.app.help.toast.registerAndroidToaster
+import io.legado.app.help.tts.registerAndroidSystemTtsEngine
+import io.legado.app.help.ui.registerAndroidOpenUrlProvider
+import io.legado.app.help.ui.registerAndroidUserAgentProvider
+import io.legado.app.help.update.registerAndroidAppUpdate
+import io.legado.app.model.BookCover
+import io.legado.app.model.CacheBook
+import io.legado.app.model.fileBook.registerAndroidFileBookProviders
+import io.legado.app.model.fileBook.registerEpubApplicationContext
+import io.legado.app.model.registerAndroidAudioPlayProviders
+import io.legado.app.model.registerAndroidReadBookPlatform
+import io.legado.app.model.registerAndroidRealScreen
+import io.legado.app.model.script.JsEngines
+import io.legado.app.model.script.registerAndroidJsEngines
+import io.legado.app.model.webBook.registerAndroidBookInfoRefresher
+import io.legado.app.model.webBook.registerAndroidWebBookProviders
+import io.legado.app.service.WebService
+import io.legado.app.ui.book.changesource.registerAndroidChangeBookSourcePlatform
+import io.legado.app.ui.book.manage.registerAndroidBookshelfManagePlatform
+import io.legado.app.ui.browser.configureWebViewStartUpMode
+import io.legado.app.ui.main.AndroidUpdateBookCallback
+import io.legado.app.ui.platform.registerSharedAppContext
+import io.legado.app.utils.LogUtils
+import io.legado.app.utils.defaultSharedPreferences
+import io.legado.app.utils.registerAndroidACacheDirProvider
+import io.legado.app.utils.registerAndroidRegexErrorHandler
+import io.legado.app.utils.registerAndroidScreenInfoProvider
+import io.legado.app.utils.removePref
+import io.legado.app.web.registerAndroidWebServerPlatform
+import io.legado.app.web.utils.registerAndroidWebAssetSource
+import io.legado.app.web.utils.registerAndroidWebStrings
+import kotlinx.coroutines.launch
+import java.net.URL
+import java.util.concurrent.TimeUnit
+
+class App : Application() {
+
+    companion object {
+        init {
+            if (BuildConfig.DEBUG) {
+                System.setProperty("kotlinx.coroutines.debug", "on")
+            }
+        }
+
+        /** splitties.init.appCtx 替代: 全局 Application 实例 (onCreate 早期赋值)。 */
+        lateinit var instance: App
+            private set
+    }
+
+    private lateinit var oldConfig: Configuration
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        // WebView 内核的 UI 线程初始化改成 ASYNC 分片 (见 configureWebViewStartUpMode)。
+        // 必须排在任何 WebView API 之前 (全进程一次生效, 须在任何 WebView 访问前)
+        configureWebViewStartUpMode(this)
+        // Android-KMP library 不生成 BuildConfig，由宿主注入 ApplicationInfo 可调试状态。
+        registerAndroidDebugState(this)
+        // 注册 shared 模块的 ApplicationContext, 供 commonMain 的 stringRes(resId) 使用
+        registerSharedAppContext(this)
+        // 注册 commonMain 的 Toasters actual (AndroidToaster), 供下沉业务调用 Toasters.get().toast()
+        registerAndroidToaster(this)
+        // 注册 EpubFile androidMain 的 ApplicationContext, 供 LocalEpubResource android actual
+        // 打开 content scheme 本地书籍 (contentResolver.openFileDescriptor); 未注册时
+        // content scheme 路径返回 null (PFD 获取失败, EpubFile 记录错误日志)
+        registerEpubApplicationContext(this)
+        registerAndroidAppFilesDir(instance)
+        // 注册真实屏幕尺寸 context (含状态栏的全屏, 供壁纸/启动图烘焙取全屏比例; 与内容区
+        // ScreenInfoProvider 语义不同, 见 AndroidRealScreen 注释)
+        registerAndroidRealScreen(instance)
+        // 注册 appString 平台 provider (commonMain 非 UI 层字符串通道): 先后台暖缓存
+        // 常用 key (填热 Compose Resources AsyncCache), 再注册 provider; 取值走
+        // androidAppString 直取, 缓存命中后零 IO, 未命中同步兜底读取 (预热只是加速,
+        // 非正确性前提); 须在 Locale.setDefault 之后 — attachBaseContext 的
+        // AppContextWrapper.wrap 已设置
+        warmAppStringCache()
+        registerAndroidAppStringProvider()
+        registerAndroidAppLogHost()
+        // 注册 ScreenInfoProvider (供 SystemUtils.screenWidthPx/screenHeightPx 委托读取),
+        // 须在任何 SystemUtils 屏幕尺寸访问之前 (PdfFile 渲染等)
+        registerAndroidScreenInfoProvider()
+        // 注册 UI Provider (Toast/OpenUrl/UserAgent, 供 JsExtensionsCommon.toast/longToast/
+        // getWebViewUA/openUrl 回调, 须在任何 JS 业务调用之前)
+        registerAndroidOpenUrlProvider()
+        registerAndroidUserAgentProvider()
+        registerAndroidJsEngines()
+        // 注册 ACache 的 cacheDir/filesDir 注入 (供 ACache.get(cacheName) 获取目录),
+        // 必须在 registerAndroidFileCacheProvider 之前 (FileCacheProvider 委托 ACache)
+        registerAndroidACacheDirProvider()
+        // 注册 FileCacheProvider (委托 ACache), 供 commonMain 的 CacheManager
+        // getFile/putFile/getByteArray/put(ByteArray)/delete 文件操作调用;
+        // 必须在任何 CacheManager 文件操作之前完成 (JsEngines 注册后 JS 即可能触发)
+        registerAndroidFileCacheProvider()
+        registerAndroidBackstageWebView()
+        registerAndroidBookInfoRefresher()
+        // 注册 BookHelp 章节缓存 / 图片缓存 / 本地书定位三个平台 provider
+        // (commonMain 下沉的业务编排层经 BookStorageProviders/BookImageStorageProviders/
+        // LocalBookLocators 间接调用 app 端 BookHelp, 须在任何 commonMain 业务调用前完成注册)
+        BookStorageProviders.register(AndroidBookStorage)
+        BookImageStorageProviders.register(AndroidBookImageStorage)
+        LocalBookLocators.register(AndroidLocalBookLocator())
+        // 注册 RegexErrorHandler (longToastOnUi/saveCrashInfo2File/restart),
+        // 供 shared jvmAndAndroidMain 的 RegexReplacerImpl 在替换超时分支调用;
+        // 须在 registerAndroidWebBookProviders 之前 (任何 RegexReplacers.get().replace 之前)
+        registerAndroidRegexErrorHandler()
+        // 注册 AppUpdateEnvironment (平台/版本号/渠道/ABI), 供 shared AppUpdateManager 检查更新;
+        // 关于页入口以 AppUpdateManager.isAvailable() 为 gate, 不注册就不显示"检查更新"
+        registerAndroidAppUpdate()
+        // 注册 CronetProvider (桥接 app 端 Cronet object 与 AppConfig.isCronet);
+        // 须在 registerAndroidWebBookProviders 之前 (OkHttpClientProviders 注册后,
+        // shared okHttpClient 首次 lazy 初始化会读 CronetProviders.get())
+        registerAndroidCronetProvider()
+        // 注册 CookieStoreProvider, 让 shared 端业务层能跨平台调用 app 端 CookieStore/CookieManager;
+        // 须同步注册 (放后台协程会被同批并行块中的网络请求抢先消费,
+        // 未注册时 CookieStoreProviders.get() 返回 null, 消费方 fail-silent 拿到空 cookie)
+        registerAndroidCookieStoreProvider()
+        // 注册 CookieJarBridge (commonMain SharedCookieJarBridge, 1:1 复刻 app CookieManager)
+        // 须在 CookieStoreProvider 之后 (bridge 通过 CookieStoreProviders.get() 间接访问存储)
+        registerSharedCookieJarBridge()
+        registerAndroidWebBookProviders()
+        // 注册 Coil3 BookImageLoader (Compose 图片加载, 替代 Glide 迁移批 1 共享面接线)
+        // 依赖 OkHttpClientProviders (上一步 registerAndroidWebBookProviders 已注册),
+        // ImageLoader 内部 lazy 构建故注册本身不触发网络栈初始化
+        registerAndroidBookImageLoader(instance)
+        // JsExtensions 压缩方法 (getZip/Rar/7zByteArrayContent 等) 走 ArchiveProviders,
+        // app 端委托 ArchiveUtils/LibArchiveUtils (libarchive 全格式)
+        ArchiveProviders.register(AndroidArchiveProvider)
+        // Coil3 批 2: 设置 SingletonImageLoader.Factory, 让 app 端 AsyncImage / imageView.load 默认走
+        // fetcher 层注册防盗链 header 注入 + 共享 OkHttpClient 的 ImageLoader;
+        // 走 androidBookImageLoader 单例, 与 BookImageLoaders 同一实例 (磁盘缓存同目录不可多实例)
+        // MangaModelFetcher 已随漫画图片链路下沉到 buildBookImageLoader 内部注册
+        coil3.SingletonImageLoader.setSafe {
+            io.legado.app.help.image.androidBookImageLoader(it)
+        }
+        // 注册 FileBook 平台 provider (commonMain FileBook object 经
+        // FileBookProviders 调到 app 端 FileBookAccessorImpl, 含 importFromArchive /
+        // importLocalFile / saveBookFile / downloadRemoteBook / mergeBook 等重 Android 逻辑)
+        registerAndroidFileBookProviders()
+        registerAndroidPasswordProvider()
+        // 注册 ServiceLaunchers (commonMain Download/CacheBook/UpdateBook 启动入口)
+        registerAndroidServiceLauncher(instance)
+        // 注册 UpdateBookCallback 默认实现: shared BookshelfViewModel 据此构造 UpdateBookShared
+        // 刷新引擎 (书架菜单/下拉刷新、自动更新、条目转圈状态、进度通知均依赖它;
+        // iOS/鸿蒙端在 registerNativeUpdateBookCallback 注册, 桌面端在 Main.kt 注册)
+        UpdateBookCallbacks.registerDefault(AndroidUpdateBookCallback)
+        // 注册 Web 服务 provider (commonMain WebServerManager 调用 WebServerPlatform/WebAssetSource/WebStrings)
+        // - WebServerPlatform: HttpServer+WebSocketServer 起停 + serve 回调拉起 WebService 续命 wakelock
+        // - WebAssetSource: composeResources 读 web 静态资源 (单一数据源 commonMain/composeResources/files/web)
+        // - WebStrings: cannot_empty 文案注入 WebSocketServer
+        // 须在任何 WebServerManager.start()/stop() 之前注册 (用户触发 Web 服务开关时)
+        registerAndroidWebServerPlatform { WebService.serve() }
+        registerAndroidWebAssetSource(instance)
+        registerAndroidWebStrings(androidAppString("cannot_empty"))
+        // 注册 AudioPlay 平台 provider (commonMain AudioPlayShared 调用
+        // AudioPlayCommanders 派发 Service 命令,
+        // 须在 registerAndroidWebBookProviders 之后, 因 AudioPlayShared 依赖 AppDbProviders)
+        registerAndroidAudioPlayProviders()
+        // 注册 ChangeBookSource 平台 provider (commonMain ChangeBookSourceViewModelShared 调用
+        // ChangeBookSourcePlatformProviders.get() 取 AndroidChangeBookSourcePlatform,
+        // 须在 registerAndroidWebBookProviders 之后, 因换源依赖 AppDbProviders / WebBookProviders)
+        registerAndroidChangeBookSourcePlatform()
+        // 注册 BookshelfManage 平台 provider (commonMain BookshelfManageViewModelShared 调用
+        // BookshelfManagePlatformProviders.get() 取 AndroidBookshelfManagePlatform,
+        // 须在 registerAndroidWebBookProviders 之后, 因换源依赖 AppDbProviders / WebBookProviders)
+        registerAndroidBookshelfManagePlatform()
+        // 注册 ReadBookShared 的 Android 平台出口 (朗读/缓存服务运行态 + 图片/本地 txt 缓存清理);
+        // 阅读页可由 deep link 直达, 注册必须早于任何 Activity
+        registerAndroidReadBookPlatform()
+        // 注册系统 TTS 引擎 (共享 OneShotTts 的一次性朗读: 选中文字朗读 / RSS 朗读)
+        registerAndroidSystemTtsEngine()
+        // 注册 CacheBookCallback 桥接活动阅读页 (CacheBookShared 调度核心下沉到 commonMain 后,
+        // app 端通过 callback 把下载完成事件回放到活动阅读实例)
+        CacheBook.registerCallback()
+        registerAndroidPreferenceProvider()
+        // 旧版 SP 主页设置/收藏迁移 (e8b2c5837d 改存 filesDir JSON 后旧数据弃读, 见 LegacyHomeSpMigration);
+        // 须在 registerAndroidAppFilesDir (onCreate 早段) 之后、Home 首次 load 之前
+        migrateLegacyHomeSp(defaultSharedPreferences)
+        registerAndroidDirectLinkUploadProviders()
+        // 注册 help 引导版本标记存储 (委托 "local" prefs, 与原版 LocalConfig 同存储)
+        registerAndroidLocalConfigStore()
+        // 注册备份/恢复的 Android 钩子 (SAF 复制解压 / config.xml 旧格式 / 主题与图标刷新)
+        registerAndroidBackupRestoreHook()
+        // 注册 ReadBookConfigProviders: app 端 ReadBookConfig 已收敛为薄壳, 全部转发到这里
+        // 注册的 ReadBookConfigShared 实例 (shared UI / BackupShared 也共用同一实例)。
+        // 须在 registerAndroidAppFilesDir + registerAndroidWebBookProviders(AppConfigProviders) 之后。
+        ReadBookConfigProviders.register(
+            AndroidReadConfigProviders().readBookConfig
+        )
+        CrashHandler(this)
+        oldConfig = Configuration(resources.configuration)
+        applyDayNightInit(this)
+        registerActivityLifecycleCallbacks(LifecycleHelp)
+        defaultSharedPreferences.registerOnSharedPreferenceChangeListener(AppConfig)
+        // jsoup-compat 复用宿主共享 OkHttpClient,继承 CookieJar/限流/Cronet 拦截器
+        org.jsoup.Jsoup.clientFactory = { okHttpClient }
+        Coroutine.async {
+            LogUtils.init(this@App)
+            LogUtils.d("App", "onCreate")
+            LogUtils.logDeviceInfo()
+            createNotificationChannels()
+            // 原在 ReaderProvider.onCreate, 但那早于 Application.onCreate, 取多语言文案会崩
+            io.legado.app.api.ShortCuts.buildShortCuts(this@App)
+            DefaultData.upVersion()
+            // Arco: 清理旧版本遗留的 barElevation 偏好值（elevation 已移除）
+            instance.removePref(PreferKey.barElevation)
+            AppFreezeMonitor.init(this@App)
+            DispatchersMonitor.init()
+        }
+        Coroutine.async {
+            if (AppConfig.isCronet) {
+                Cronet.preDownload(null)
+                // 尝试初始化 GMS Cronet Provider
+                runCatching {
+                    val installer =
+                        Class.forName("com.google.android.gms.net.CronetProviderInstaller")
+                    installer.getMethod("installWithSharedLibrary", Context::class.java)
+                        .invoke(null, this@App)
+                }.onFailure {
+                    LogUtils.d("App", "GMS Cronet not available: ${it.message}")
+                }
+            }
+            // 注册 CookieStoreProvider / CookieJarBridge 已上移 onCreate 同步段 (见前文)
+            URL.setURLStreamHandlerFactory(ObsoleteUrlFactory(okHttpClient))
+            launch { installGmsTlsProvider(instance) }
+            initQuickJs()
+            //初始化封面
+            BookCover.toString()
+        }
+        Coroutine.async {
+            if (LocalConfig.lastBackup + TimeUnit.DAYS.toMillis(1) < System.currentTimeMillis()) {
+                appDb.cacheDao.clearDeadline(System.currentTimeMillis())
+                BookHelp.clearInvalidCache()
+                Backup.clearCache()
+                ReadBookConfig.clearBgAndCache()
+                ThemeConfig.clearBg()
+            }
+        }
+        Coroutine.async {
+            //调整排序序号
+            SourceHelp.adjustSortNumber()
+            //同步阅读记录
+            if (AppConfig.syncBookProgress) {
+                AppWebDav.downloadAllBookProgress()
+            }
+        }
+    }
+
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(AppContextWrapper.wrap(base))
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val diff = newConfig.diff(oldConfig)
+        if ((diff and ActivityInfo.CONFIG_UI_MODE) != 0) {
+            applyDayNight(this)
+        }
+        oldConfig = Configuration(newConfig)
+    }
+
+    /**
+     * 尝试在安装了GMS的设备上(GMS或者MicroG)使用GMS内置的Conscrypt
+     * 作为首选JCE提供程序，而使Okhttp在低版本Android上
+     * 能够启用TLSv1.3
+     * https://f-droid.org/zh_Hans/2020/05/29/android-updates-and-tls-connections.html
+     * https://developer.android.google.cn/reference/javax/net/ssl/SSLSocket
+     *
+     * @param context
+     * @return
+     */
+    private fun installGmsTlsProvider(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return
+        }
+        try {
+            val gmsPackageName = "com.google.android.gms"
+            val appInfo = packageManager.getApplicationInfo(gmsPackageName, 0)
+            if ((appInfo.flags and ApplicationInfo.FLAG_SYSTEM) == 0) {
+                return
+            }
+            val gms = context.createPackageContext(
+                gmsPackageName,
+                CONTEXT_INCLUDE_CODE or CONTEXT_IGNORE_SECURITY
+            )
+            gms.classLoader
+                .loadClass("com.google.android.gms.common.security.ProviderInstallerImpl")
+                .getMethod("insertProvider", Context::class.java)
+                .invoke(null, gms)
+        } catch (e: java.lang.Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * 创建通知ID
+     */
+    private fun createNotificationChannels() {
+        // NotificationChannel 是 API 26+ (minSdk 24), 低版本直接跳过, 否则 API 24/25 崩溃
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+        val downloadChannel = NotificationChannel(
+            channelIdDownload,
+            androidAppString("action_download"),
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            enableLights(false)
+            enableVibration(false)
+            setSound(null, null)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+
+        val readAloudChannel = NotificationChannel(
+            channelIdReadAloud,
+            androidAppString("read_aloud"),
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            enableLights(false)
+            enableVibration(false)
+            setSound(null, null)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+
+        val webChannel = NotificationChannel(
+            channelIdWeb,
+            androidAppString("web_service"),
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            enableLights(false)
+            enableVibration(false)
+            setSound(null, null)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+
+        //向notification manager 提交channel
+        notificationManager.createNotificationChannels(
+            listOf(
+                downloadChannel,
+                readAloudChannel,
+                webChannel
+            )
+        )
+    }
+
+    private fun initQuickJs() {
+        // 触发当前 JS 引擎单例初始化,预加载 bootstrap (quickjs 预编译 bytecode / rhino 加载类)
+        JsEngines.get()
+    }
+}

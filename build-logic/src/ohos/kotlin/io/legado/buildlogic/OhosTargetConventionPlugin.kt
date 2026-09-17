@@ -1,0 +1,85 @@
+package io.legado.buildlogic
+
+import org.gradle.api.Plugin
+import org.gradle.api.Project
+import org.gradle.api.artifacts.VersionCatalogsExtension
+import org.gradle.kotlin.dsl.configure
+import org.gradle.kotlin.dsl.getByType
+import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
+import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
+import java.io.File
+
+/**
+ * 给 :shared 添加 CPF 的 ohosArm64 target (真机); x86_64 模拟器因 CPF fork 生态库
+ * 无 ohosX64 变体不再声明 (2026-08-16 实测链接失败)。
+ * 只有 CPF 分支 KGP 才有这个 DSL, 所以本文件放在 src/ohos, 由开关决定是否参与编译。
+ */
+class OhosTargetConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        val rendererBackend = rootProject.findProperty("rendererBackend")?.toString()
+            ?: "fusion-renderer"
+        require(rendererBackend == "fusion-renderer") {
+            "Legado OHOS only supports CPF fusion rendering; rendererBackend must be 'fusion-renderer', " +
+                "but was '$rendererBackend'."
+        }
+        val composeExport = extensions.getByType<VersionCatalogsExtension>().named("libs")
+            .findVersion("composeMultiplatform-ohos").get().requiredVersion
+        val cinteropDir = File(projectDir, "src/cinterop")
+
+        // arm64-v8a 与 x86_64 共用同一套 sharedLib/cinterop 配置 (K/N 各编一套 ABI 产物)。
+        fun KotlinNativeTarget.configureOhosSharedLib() {
+            binaries {
+                sharedLib {
+                    baseName = "legado_shared"
+                    if (buildType == NativeBuildType.RELEASE) {
+                        // 2026-08-29 (原 optimized=true 实测: 减 6MB (8.5%), 但需 10g 堆且链接约 30 分钟)
+                        // 体积仍走链接期轻量手段: -s strip 本地符号表/.debug (约 38MB,
+                        // 动态导出符号 .dynsym 保留, ArkTS dlopen/dlsym 不受影响) +
+                        // --gc-sections 死代码消除 (对标 R8 未开混淆的精简)。
+                        // 注意: linkerOpts 直传 ld.lld, 不能用 GNU ld 的 -Wl, 前缀。
+                        optimized = false
+                        linkerOpts("-s", "--gc-sections")
+                        // optimized=false 只把 clang 档位降到 noopt 档, 而 konan.properties 里
+                        // clangNooptFlags.ohos_arm64 = -O1 —— LLVM 仍会跑 Machine Instruction
+                        // Scheduler, 16GB 机器上 OOM (崩在 -O1 的 codegen 阶段)。
+                        // 把该档位覆写成 debug 档的 -O0, 保留 release buildType (包名/strip 不变)。
+                        freeCompilerArgs += "-Xoverride-konan-properties=clangNooptFlags.ohos_arm64=-O0"
+                    }
+                    export("org.jetbrains.compose.export:export:$composeExport")
+                    linkerOpts("-lz")
+                    linkerOpts(
+                        "-lnative_drawing",
+                        "-limage_source",
+                        "-lpixelmap",
+                        "-lpixelmap_ndk.z",
+                        "-lnative_window",
+                        "-lace_napi.z",
+                        "-lhilog_ndk.z",
+                        "-lhitrace_ndk.z",
+                        "-luv",
+                        "-lunwind",
+                        "-licu",
+                    )
+                }
+            }
+            compilations.getByName("main").cinterops.apply {
+                create("quickjs") {
+                    defFile(File(cinteropDir, "quickjs.def"))
+                    includeDirs(File(cinteropDir, "quickjs-ng"))
+                }
+                create("mbedtls") {
+                    defFile(File(cinteropDir, "mbedtls.def"))
+                    includeDirs(
+                        File(cinteropDir, "mbedtls/include"),
+                        File(cinteropDir, "mbedtls"),
+                    )
+                }
+            }
+        }
+
+        extensions.configure<KotlinMultiplatformExtension> {
+            ohosArm64 { configureOhosSharedLib() }
+        }
+    }
+}

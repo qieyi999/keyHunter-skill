@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ⚠️ 本文件与 project.yml 的 info.properties 是双写关系: `xcodegen generate`
+         会用 project.yml 重写本文件 (不读原内容)。改这里必须同步改 project.yml, 否则一 generate 就丢。 -->
+    <!-- App 元信息 -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleDisplayName</key>
+    <string>legado</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>3.26.081614</string>
+    <key>CFBundleVersion</key>
+    <string>17376</string>
+
+    <!-- App 状态栏样式 (Compose Multiplatform 自管理, 用默认) -->
+    <key>UIStatusBarStyle</key>
+    <string>UIStatusBarStyleDefault</string>
+    <key>UIStatusBarHidden</key>
+    <false/>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <true/>
+    <!-- Compose Multiplatform 1.11+ 启动必需；同时解除 ProMotion 设备的 60Hz 帧率限制。 -->
+    <key>CADisableMinimumFrameDurationOnPhone</key>
+    <true/>
+
+    <!-- 屏幕方向: legado 是阅读类 App, 支持竖屏 + 横屏 + 翻转 -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <!-- iPad 屏幕方向 -->
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <!-- 启动屏 (iOS 14+ 用 Storyboard, 这里给空配置让系统默认) -->
+    <key>UILaunchStoryboardName</key>
+    <string></string>
+
+    <!-- App 安全区域: Compose Multiplatform 自处理 safeArea, 让窗口铺满 -->
+    <key>UIRequiresFullScreen</key>
+    <false/>
+
+    <!-- 网络权限说明 (用于书源抓取 / 封面加载) -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <!-- 允许 HTTP 明文 (书源 URL 通常为 http://, ATS 默认强制 https 会阻塞) -->
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+
+    <!-- 后台模式: TTS 朗读需要在后台继续播放音频; processing 供缓存书籍的 BGProcessingTask -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+        <string>processing</string>
+    </array>
+
+    <!-- BGTaskScheduler 允许的任务标识 (缓存书籍后台续跑, 见 shared IosBackgroundTasks.kt)。
+         这里刻意写死而不用 $(PRODUCT_BUNDLE_IDENTIFIER).cachebook: Xcode 虽然会展开该变量,
+         但 Kotlin 侧 CACHE_BOOK_TASK_ID 是编译期常量, 两边必须逐字一致, 对不上 register 直接崩。 -->
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>shutiao.reader.cachebook</string>
+    </array>
+
+    <!-- 文件共享: 沙盒 Documents 在"文件"App 与 Finder/iTunes 可见 (导出/另存为落地点) -->
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
+
+    <!-- 保存图片到相册权限说明 (阅读页图片长按菜单"保存到相册"; iOS 14+ 缺此 key 调用会直接崩) -->
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>保存阅读页图片到系统相册需要访问你的照片库</string>
+
+    <!-- legado:// / yuedu:// deep link (对照 app 端 AssociationActivity intent-filter) -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>io.legado.app.deeplink</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>legado</string>
+                <string>yuedu</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- 外部视频投递入口 (对照 Android FileAssociationProvider 的 VIEW/SEND + video/* intent-filter):
+         让 legado 出现在"用其他应用打开 / 分享到"候选里。
+         entry 1 用可确证的公开 UTI (public.movie 总类 + mp4/ts/mov/avi 具体类);
+         entry 2 用 CFBundleTypeExtensions 兜底 mkv/webm/flv/m3u8 等查不到可确证公开 UTI 的扩展名,
+         扩展名集合与 commonMain AppPattern.videoFileRegex 逐一对齐。
+         投递链: iOSApp.swift onOpenURL → shared handleIosLaunchRequest → LaunchRequest.ImportFile
+         → LegadoApp 嗅探视频 → AppRoute.VideoPlay(VideoPlayTarget.Direct)。
+         ⚠️ 本段与 project.yml 双写: xcodegen generate 会用 project.yml 重写本文件 -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Movie</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.movie</string>
+                <string>public.mpeg-4</string>
+                <string>public.mpeg-2-transport-stream</string>
+                <string>public.quicktime-movie</string>
+                <string>public.avi</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Video File</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>mp4</string>
+                <string>mkv</string>
+                <string>mov</string>
+                <string>webm</string>
+                <string>flv</string>
+                <string>avi</string>
+                <string>ts</string>
+                <string>m3u8</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- 应用图标与交替图标 (换桌面图标, 对照 Android Launcher1/4/5):
+         主图标 AppIcon.png (默认), 交替图标 Icon1/Icon4/Icon5.png, 经
+         UIApplication.setAlternateIconName 切换 (见 shared IosPlatformCapabilities.changeLauncherIcon)。
+         ⚠️ 本文件与 project.yml 双写: xcodegen generate 会用 project.yml 重写本文件 -->
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon</string>
+            </array>
+        </dict>
+        <key>CFBundleAlternateIcons</key>
+        <dict>
+            <key>Icon1</key>
+            <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>Icon1</string>
+                </array>
+            </dict>
+            <key>Icon4</key>
+            <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>Icon4</string>
+                </array>
+            </dict>
+            <key>Icon5</key>
+            <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>Icon5</string>
+                </array>
+            </dict>
+        </dict>
+    </dict>
+    <key>CFBundleIcons~ipad</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon</string>
+            </array>
+        </dict>
+        <key>CFBundleAlternateIcons</key>
+        <dict>
+            <key>Icon1</key>
+            <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>Icon1</string>
+                </array>
+            </dict>
+            <key>Icon4</key>
+            <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>Icon4</string>
+                </array>
+            </dict>
+            <key>Icon5</key>
+            <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>Icon5</string>
+                </array>
+            </dict>
+        </dict>
+    </dict>
+</dict>
+</plist>

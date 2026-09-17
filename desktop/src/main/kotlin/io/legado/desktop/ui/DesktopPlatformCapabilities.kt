@@ -1,0 +1,928 @@
+package io.legado.desktop.ui
+
+import io.legado.app.constant.AppLog
+import io.legado.app.constant.PreferKey
+import io.legado.app.constant.SourceType
+import io.legado.app.data.AppDbProviders
+import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookChapter
+import io.legado.app.data.entities.BookSourcePart
+import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.DirectLinkUploadRule
+import io.legado.app.help.RssToolbarActions
+import io.legado.app.help.book.isImage
+import io.legado.app.help.book.tryParesExportFileName
+import io.legado.app.help.config.LocalConfigKeys
+import io.legado.app.help.config.PreferenceProviders
+import io.legado.app.help.file.AppFilesDirs
+import io.legado.app.help.source.SourceVerificationHelpShared
+import io.legado.app.help.storage.DataStorageProviders
+import io.legado.app.help.toast.Toasters
+import io.legado.app.model.Debug
+import io.legado.app.ui.FileAssociationDispatch
+import io.legado.app.ui.book.import.ImportFileItem
+import io.legado.app.ui.book.read.config.FontItem
+import io.legado.app.ui.book.source.BookSourceSort
+import io.legado.app.ui.book.source.manage.BookSourceViewModelShared
+import io.legado.app.ui.compose.platform.jvmGetString
+import io.legado.app.ui.config.MODE_EDIT_CONFIG
+import io.legado.app.ui.config.MODE_EDIT_PREFS
+import io.legado.app.ui.config.MODE_NEW_CONFIG
+import io.legado.app.ui.root.AppNavigatorProviders
+import io.legado.app.ui.root.AppOverlay
+import io.legado.app.ui.root.AppRoute
+import io.legado.app.ui.root.BookRef
+import io.legado.app.ui.root.DefaultDialogTransitionSpec
+import io.legado.app.ui.root.DialogTransitionSpec
+import io.legado.app.ui.root.SharedPlatformCapabilities
+import io.legado.app.ui.root.PlatformServiceProviders
+import io.legado.app.ui.root.RouteResultPayload
+import io.legado.app.ui.root.RouteTransitionSpec
+import io.legado.app.ui.root.pushExportDispatch
+import io.legado.app.utils.cnCompare
+import io.legado.app.ui.root.TransitionEasing
+import io.legado.app.ui.root.toRouteRef
+import io.legado.app.utils.GSON
+import io.legado.app.utils.RemoteAssetsUtils
+import io.legado.app.utils.browseUrl
+import io.legado.app.utils.compress.ZipUtils
+import io.legado.app.utils.toJson
+import io.legado.desktop.constant.DesktopAppInfo
+import io.legado.desktop.help.DesktopCrashLogDirs
+import io.legado.desktop.help.applyDesktopLanguagePref
+import io.legado.desktop.help.restartDesktopAppForLanguage
+import io.legado.desktop.help.book.DesktopBookExport
+import io.legado.desktop.help.source.DesktopCheckSource
+import io.legado.desktop.help.webview.DesktopWebViewEngines
+import io.legado.desktop.help.webview.WebViewWindowHandle
+import io.legado.desktop.help.webview.WebViewWindowRequest
+import io.legado.desktop.model.fileBook.DesktopImportBook
+import io.legado.desktop.model.fileBook.DesktopImportFile
+import io.legado.desktop.ui.DesktopPlatformCapabilities.saveLog
+import io.legado.desktop.ui.component.FileDialogs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.StringSelection
+import java.io.File
+import java.lang.management.ManagementFactory
+import java.net.URI
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.management.ObjectName
+
+object DesktopPlatformCapabilities : SharedPlatformCapabilities {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    override val capabilityScope: CoroutineScope get() = scope
+
+    private val appDb get() = AppDbProviders.get()
+    private val prefs get() = PreferenceProviders.get()
+
+    /** 书源分组增删改 (shared 下沉件), 供 [DesktopDialogHost] 的分组管理对话框调用。 */
+    internal val bookSourceViewModel by lazy { BookSourceViewModelShared(scope) }
+
+    override fun exitApplication() {
+        // 主界面返回双击退出等 shared 调用: 关闭主窗口 (等价标题栏关闭按钮),
+        // 触发 Window.onCloseRequest → compose exitApplication (含单实例守卫清理)
+        (PlatformServiceProviders.get() as? DesktopPlatformServices)
+            ?.windowHandle?.window?.dispose()
+    }
+
+    // ===== 全局转场动画平台 spec (方案 A: 动画单一注入点参数化) =====
+    // 桌面端无系统动画配置可动态读取 (JVM 无对应系统 API), 按桌面平台惯例提供默认值:
+    // Windows Fluent motion 规范 (时长 150~300ms 取 200ms, 标准曲线 cubic-bezier(0.1,0.9,0.2,1));
+    // 形态 = 淡入淡出 + 轻微位移 (8% 宽度), 旧页/出栈页不位移仅淡出 (窗口淡入淡出惯例)。
+    override val routeTransitionSpec: RouteTransitionSpec
+        get() = RouteTransitionSpec(
+            pushDurationMillis = 200,
+            pushEasing = TransitionEasing.CubicBezier(0.1f, 0.9f, 0.2f, 1f),
+            newPageSlideFraction = 0.08f,
+            oldPageShiftFraction = 0f,
+            newPageFadeIn = true,
+            oldPageFadeOut = true,
+            newPageScaleFrom = 1f,
+            popDurationMillis = 200,
+            popEasing = TransitionEasing.CubicBezier(0.1f, 0.9f, 0.2f, 1f),
+            targetPageSlideFraction = 0.08f,
+            outgoingSlideFraction = 0f,
+            // 目标页不淡入: 它在出栈页之下本就完整渲染, 淡入只会在中间帧露出半透明空白,
+            // 由出栈页淡出直接露出即可 (原先动画层对 pop 目标页强制 alpha=1, 等价于此)
+            targetPageFadeIn = false,
+            outgoingFadeOut = true,
+            targetPageScaleFrom = 1f,
+        )
+
+    // 桌面无系统对话框动画规范, 沿用 shared 默认 (Android 系统 dialog 动画资源语义 200/150ms)
+    override val dialogTransitionSpec: DialogTransitionSpec
+        get() = DefaultDialogTransitionSpec
+
+    override fun openExternalUrl(url: String) {
+        browseUrl(url)
+    }
+
+    // 语言: CMP 资源按 Locale.current 选 values-xx 目录, 进程内改默认 locale 不会重取
+    // 已组合的字符串, 所以与安卓一样靠重启生效 (对照原版 appCtx.restart())
+    override val languageSwitchSupported: Boolean get() = true
+
+    override fun applyAppLanguage() {
+        applyDesktopLanguagePref()
+        restartDesktopAppForLanguage()
+    }
+
+    override fun openWebView(url: String, sourceKey: String, sourceName: String) {
+        // 2026-08-06 用户拍板: 桌面端所有中转 WebView 界面去掉, 直接开独立浏览器窗口
+        // (cookie 经书源 key 回写, 登录态可复用; 无书源时裸开窗口)
+        scope.launch {
+            val source = if (sourceKey.isNotEmpty()) {
+                runCatching {
+                    AppDbProviders.get().bookSourceDao.getBookSource(sourceKey)
+                }.getOrNull()
+            } else null
+            if (source != null) {
+                SourceVerificationHelpShared.startBrowser(
+                    source, url, sourceName.ifBlank { "网页" }, false, false
+                )
+            } else {
+                DesktopWebViewEngines.get()?.openWindow(
+                    WebViewWindowRequest(
+                        url = url,
+                        title = sourceName.ifBlank { "网页" },
+                        cookieTag = sourceKey.ifBlank { null },
+                        // source 查不到时默认 book (对照 AppRoute.WebView.sourceType 默认值);
+                        // 删除源确认弹窗显示源名, 空时回退 sourceKey
+                        sourceType = SourceType.book,
+                        sourceName = sourceName,
+                    )
+                )
+            }
+        }
+    }
+
+    override val rssDirectWindow: Boolean get() = true
+
+    /**
+     * 书源 URL 登录直开窗 (2026-08-07 用户拍板: 去掉登录中转界面)。
+     *
+     * 带 isLogin 语义的独立浏览器窗口 (工具栏"确定" = 确认 cookie 后 reload 关窗,
+     * 对照原版 WebViewActivity menu_ok isLogin 分支), cookie 按书源 key 回写;
+     * 引擎不可用/开窗失败降级系统浏览器并提示。无论成败都返回 true —— 桌面端
+     * 登录不弹对话框外壳 (表单登录仍走 shared Overlay, 不经过这里)。
+     */
+    override fun openLoginWebView(
+        url: String,
+        sourceKey: String,
+        sourceName: String,
+        sourceType: Int,
+    ): Boolean {
+        val engine = DesktopWebViewEngines.get()
+        if (engine == null) {
+            browseUrl(url)
+            runCatching {
+                Toasters.get().toastLong("内置浏览器不可用, 已用系统浏览器打开登录页")
+            }
+            // 系统浏览器无关窗回调, 直接放行等在 showLoginDialog() 上的 JS 线程
+            SourceVerificationHelpShared.notifyLoginFinished(sourceKey)
+            return true
+        }
+        val handle = engine.openWindow(
+            WebViewWindowRequest(
+                url = url,
+                // 对照原版登录页标题 getString(login_source, 源名)
+                title = if (sourceName.isBlank()) {
+                    "登录"
+                } else {
+                    runCatching { jvmGetString("login_source", sourceName) }
+                        .getOrElse { "登录 $sourceName" }
+                },
+                isLogin = true,
+                cookieTag = sourceKey.ifBlank { null },
+                sourceType = sourceType,
+                sourceName = sourceName,
+                // 关窗唤醒阻塞在 source.showLoginDialog() 上的 JS 线程
+                onClosed = { SourceVerificationHelpShared.notifyLoginFinished(sourceKey) },
+            )
+        )
+        if (handle == null) {
+            browseUrl(url)
+            runCatching {
+                Toasters.get().toastLong("内置浏览器窗口打开失败, 已用系统浏览器打开登录页")
+            }
+            SourceVerificationHelpShared.notifyLoginFinished(sourceKey)
+        }
+        return true
+    }
+
+    /**
+     * RSS 阅读直开窗 (2026-08-07 用户拍板: RSS 阅读页去外壳, 功能移入浏览器窗口工具栏)。
+     *
+     * 独立浏览器窗口带 RSS 按钮组 (收藏/朗读/分享/登录), 动作经 [RssToolbarActions]
+     * 回调回 shared; 窗口关闭 → RSS 路由出栈, 路由出栈 → 窗口关闭 (经 onDetach, 幂等);
+     * 引擎不可用/开窗失败降级系统浏览器并提示。返回 true (桌面端不再渲染页面外壳)。
+     */
+    override fun openRssReader(
+        book: Book,
+        chapter: BookChapter?,
+        url: String,
+        html: String?,
+        headerMap: Map<String, String>,
+        actions: RssToolbarActions,
+    ): Boolean {
+        val target = url.ifBlank { book.tocUrl }
+        val engine = DesktopWebViewEngines.get()
+        if (engine == null) {
+            browseUrl(target)
+            runCatching {
+                Toasters.get().toastLong("内置浏览器不可用, 已用系统浏览器打开: ${book.name}")
+            }
+            return true
+        }
+        // 路由/窗口双向联动: 窗口关闭 → 路由出栈; 路由先出栈 (onDetach) → 关窗 (幂等)
+        val detached = AtomicBoolean(false)
+        var handle: WebViewWindowHandle? = null
+        actions.onDetach = {
+            detached.set(true)
+            handle?.close()
+        }
+        handle = engine.openWindow(
+            WebViewWindowRequest(
+                url = url,
+                html = html,
+                title = book.name,
+                cookieTag = book.origin,
+                // RSS 窗口书源菜单: 默认 book 类型 (book/rss 同走 bookSourceDao,
+                // 禁用/删除行为与源类型无关); 确认弹窗显示书源名
+                sourceType = SourceType.book,
+                sourceName = book.originName,
+                rssActions = actions,
+                onClosed = {
+                    // 窗口被关闭 → RSS 路由出栈; 但路由先出栈 (onDetach → close) 触发
+                    // 的 close 回调不能再 pop, 否则会误弹 RSS 之下的路由 (reviewer 2026-08-07)
+                    if (!detached.get()) {
+                        scope.launch(Dispatchers.Main) {
+                            AppNavigatorProviders.get().pop()
+                        }
+                    }
+                },
+            )
+        )
+        if (handle == null) {
+            browseUrl(target)
+            runCatching {
+                Toasters.get().toastLong("内置浏览器窗口打开失败, 已用系统浏览器打开: ${book.name}")
+            }
+        } else if (detached.get()) {
+            // 路由已先出栈: 立即关闭刚打开的窗口
+            handle.close()
+        }
+        return true
+    }
+
+    override fun shareText(text: String) {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+    }
+
+    override fun copyToClipboard(text: String) {
+        shareText(text)
+        runCatching { Toasters.get().toast(jvmGetString("copy_complete")) }
+    }
+
+    override fun getClipboardText(): String? = runCatching {
+        val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+        if (!clipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)) return null
+        clipboard.getData(DataFlavor.stringFlavor) as? String
+    }.getOrNull()
+
+    override fun testDirectLinkUpload(
+        rule: DirectLinkUploadRule,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        scope.launch {
+            runCatching {
+                io.legado.desktop.help.DesktopDirectLinkUpload.upLoad(
+                    "test.json", "{}", "application/json", rule,
+                )
+            }.onSuccess { onSuccess(it) }
+                .onFailure { onError(it.localizedMessage ?: it.toString()) }
+        }
+    }
+
+    override fun upLoadFile(
+        fileName: String,
+        file: Any,
+        contentType: String,
+        onResult: (String?) -> Unit
+    ) {
+        scope.launch {
+            runCatching {
+                io.legado.desktop.help.DesktopDirectLinkUpload.upLoad(
+                    fileName, file, contentType
+                )
+            }.onSuccess { url ->
+                withContext(Dispatchers.Main) { onResult(url) }
+            }.onFailure { error ->
+                AppLog.put("上传文件失败\n${error.message}", error)
+                Toasters.get().toast("上传文件失败\n${error.message}")
+                withContext(Dispatchers.Main) { onResult(null) }
+            }
+        }
+    }
+
+    // 按 bookUrl 查 DB 解析 BookRef, 供 deep link / 文件关联的路由导航
+    override suspend fun resolveBookRef(bookUrl: String): BookRef? =
+        appDb.bookDao.getBook(bookUrl)?.toRouteRef()
+
+    // 书架布局 / 底栏配置: shared Compose 对话框 (BookshelfNavConfigDialogs.kt)
+    override fun showBookshelfLayoutDialog() {
+        AppNavigatorProviders.get().showOverlay(AppOverlay.Dialog("bookshelf_layout"))
+    }
+
+    override fun showBottomNavConfigDialog() {
+        AppNavigatorProviders.get().showOverlay(AppOverlay.Dialog("bottom_nav_config"))
+    }
+
+    override fun showThemeCustomizeDialog(configIndex: Int?, isNight: Boolean) {
+        val mode = if (configIndex == null) MODE_NEW_CONFIG else MODE_EDIT_CONFIG
+        val index = configIndex ?: -1
+        AppNavigatorProviders.get()
+            .showOverlay(AppOverlay.Dialog("theme_customize", payload = "$mode,$index,$isNight"))
+    }
+
+    override fun showCustomizeDayThemeDialog() {
+        AppNavigatorProviders.get()
+            .showOverlay(AppOverlay.Dialog("theme_customize", payload = "$MODE_EDIT_PREFS,-1,false"))
+    }
+
+    override fun showCustomizeNightThemeDialog() {
+        AppNavigatorProviders.get()
+            .showOverlay(AppOverlay.Dialog("theme_customize", payload = "$MODE_EDIT_PREFS,-1,true"))
+    }
+
+    override fun getAppVersionName(): String? = DesktopAppInfo.versionName
+
+    // 桌面窗口无系统状态栏/导航栏, 也无屏幕方向: 对应设置项隐藏
+    override fun hasSystemBars(): Boolean = false
+
+    override fun hasScreenOrientation(): Boolean = false
+
+    // 换封面源: 对照 app 端同名方法, 走 "change_cover" overlay (payload="name\nauthor"),
+    // 结果经 overlayResults 的 RouteResultPayload.ChangeCover 回传
+    override fun showChangeCoverDialog(book: Book, onCoverSelected: (String) -> Unit) {
+        val navigator = AppNavigatorProviders.get()
+        scope.launch {
+            navigator.showOverlay(
+                AppOverlay.Dialog("change_cover", payload = "${book.name}\n${book.author}")
+            )
+            val result = navigator.overlayResults.first { it.key == "change_cover" }
+            val payload = result.payload as? RouteResultPayload.ChangeCover ?: return@launch
+            withContext(Dispatchers.Main) { onCoverSelected(payload.coverUrl) }
+        }
+    }
+
+    // ===== 关于页 =====
+    // 检查更新四端统一走 shared: AboutRoute → AboutScreenModel.checkUpdate →
+    // AppUpdateManager (环境由 registerDesktopAppUpdate 注册, 见 DesktopAppUpdate.kt),
+    // 无平台分支
+
+    // 崩溃日志: 与 app 端同走 shared OverlayContentHost 的 "crash_logs" key
+    // (数据源 = DesktopPlatformServices.crashLogs, 写入方见 DesktopCrashHandler)
+    override fun showCrashLogs() {
+        AppNavigatorProviders.get().showOverlay(AppOverlay.Dialog("crash_logs"))
+    }
+
+    // 对照 app 端 saveLog: 打包 logs + crash + heapDump 成 logs.zip 落到用户可见目录
+    // (app 端落 SAF 备份目录, 桌面端落 userExportDir; 桌面无 logcat 可 dump)
+    override fun saveLog() {
+        scope.launch {
+            runCatching { saveLogInternal() }
+                .onSuccess { Toasters.get().toast("已保存至 $it") }
+                .onFailure {
+                    AppLog.put("保存日志出错\n${it.localizedMessage}", it)
+                    Toasters.get().toast("保存日志出错\n${it.message}")
+                }
+        }
+    }
+
+    // 对照 app 端 createHeapDump: Android 用 Debug.dumpHprofData, JVM 用 HotSpotDiagnosticMXBean
+    override fun createHeapDump() {
+        scope.launch {
+            Toasters.get().toast("开始创建堆转储")
+            runCatching { createHeapDumpInternal() }
+                .onSuccess { Toasters.get().toast("堆转储已保存至 ${it.absolutePath}") }
+                .onFailure {
+                    AppLog.put("保存堆转储失败\n${it.localizedMessage}", it)
+                    Toasters.get().toast("保存堆转储失败\n${it.message}")
+                }
+        }
+    }
+
+    /**
+     * 打包日志到 logs.zip (对照 app 端 copyLogs + copyHeapDump, 桌面端无 logcat 环节)。
+     *
+     * 源: `{cacheDir}/logs` (AppLog 落盘) + 崩溃日志目录 + `{cacheDir}/heapDump`;
+     * 目标: `{userExportDir}/logs.zip`。
+     *
+     * @return 目标 zip 绝对路径
+     */
+    private suspend fun saveLogInternal(): String = withContext(Dispatchers.IO) {
+        if (!AppLog.isRecordLogEnabled) {
+            Toasters.get().toast("未开启日志记录, 请去其他设置里打开记录日志")
+        }
+        val cacheDir = File(AppFilesDirs.get().cacheDir)
+        val sources = listOf(
+            File(cacheDir, "logs"),
+            DesktopCrashLogDirs.cacheCrashDir,
+            File(cacheDir, "heapDump"),
+        ).filter { it.exists() }
+        if (sources.isEmpty()) throw NoStackTraceException("没有可保存的日志文件")
+        val outDir = File(DataStorageProviders.get().userExportDir).apply { mkdirs() }
+        val zipFile = File(outDir, "logs.zip")
+        zipFile.delete()
+        if (!ZipUtils.zipFiles(sources, zipFile)) {
+            throw NoStackTraceException("打包日志失败")
+        }
+        zipFile.absolutePath
+    }
+
+    /**
+     * JVM 堆转储 (对照 app 端 CrashHandler.doHeapDump 的 Debug.dumpHprofData)。
+     *
+     * app 端每次 createFolderReplace 只留最新一份, 这里同样先清空目录。
+     * 落 `{cacheDir}/heapDump`, 再经 [saveLog] 一起打包出去 (hprof 体积大, 不直接落用户目录)。
+     */
+    private suspend fun createHeapDumpInternal(): File = withContext(Dispatchers.IO) {
+        val heapDir = File(AppFilesDirs.get().cacheDir, "heapDump")
+        heapDir.deleteRecursively()
+        heapDir.mkdirs()
+        val heapFile = File(heapDir, "heap-dump-manually-${System.currentTimeMillis()}.hprof")
+        System.gc()
+        // HotSpotDiagnosticMXBean 是 JDK 内置诊断 MBean (com.sun.management), 经 MBeanServer
+        // 反射调用避免对 jdk.management 模块的编译期依赖 (非 HotSpot JVM 上优雅失败)
+        val server = ManagementFactory.getPlatformMBeanServer()
+        server.invoke(
+            ObjectName("com.sun.management:type=HotSpotDiagnostic"),
+            "dumpHeap",
+            arrayOf(heapFile.absolutePath, true),
+            arrayOf("java.lang.String", "boolean"),
+        )
+        heapFile
+    }
+
+    // ===== 书籍详情页 =====
+
+    // 本地书文件字节数 (对照 app 端 FileDoc.fromFile(bookUrl).size; bookUrl 形如 file:///path)
+    override suspend fun localBookFileSize(bookUrl: String): Long = withContext(Dispatchers.IO) {
+        runCatching { resolveLocalFile(bookUrl).length() }.getOrDefault(0L)
+    }
+
+    // ===== 书架管理: 导出 =====
+
+    override fun enableCustomExport(): Boolean = prefs.getBoolean(PreferKey.enableCustomExport, false)
+    override fun getDeleteBookOriginal(): Boolean = prefs.getBoolean(LocalConfigKeys.deleteBookOriginal, false)
+
+    // 导出书籍所用书源 JSON (对照 exportAllUseBookSource)
+    override fun exportAllUseBookSource() {
+        scope.launch {
+            val sources = runCatching { appDb.bookDao.getAllUseBookSource() }.getOrElse {
+                Toasters.get().toast("导出所用书源失败\n${it.message}")
+                return@launch
+            }
+            val json = GSON.toJson(sources)
+            withContext(Dispatchers.Main) {
+                pushExportDispatch("bookSource.json", json, "application/json")
+            }
+        }
+    }
+
+    // 导出书架 JSON (字段清单与 app 端 exportBookshelf 一致)
+    override fun exportBookshelf(books: List<Book>) {
+        if (books.isEmpty()) {
+            Toasters.get().toast("书籍不能为空")
+            return
+        }
+        val json = GSON.toJson(books.map { it.toShelfJsonMap() })
+        pushExportDispatch("bookshelf.json", json, "application/json")
+    }
+
+    // 导出书籍正文, 格式取导出配置 (0=txt 1=epub, 对照 app 端 AppConfig.exportType;
+    // 图片书自动走 cbz), 目录来自 pref 或现选
+    override fun exportAllBooks(books: List<Book>) {
+        if (books.isEmpty()) return
+        val cached = prefs.getString(KEY_EXPORT_BOOK_PATH, "").takeIf { File(it).isDirectory }
+            ?: defaultBookExportDir()
+        if (cached == null) {
+            selectExportFolder(books)
+            return
+        }
+        startExport(cached, books)
+    }
+
+    override fun selectExportFolder(books: List<Book>) {
+        scope.launch {
+            val dir = FileDialogs.pickDirectory(
+                "选择导出目录",
+                initialDir = defaultBookExportDir()?.let(::File),
+            ) ?: return@launch
+            prefs.putString(KEY_EXPORT_BOOK_PATH, dir.absolutePath)
+            if (books.isNotEmpty()) {
+                // 对照 app 端 exportDir 回调: 开启自定义导出时先弹章节配置对话框
+                if (enableCustomExport()) {
+                    showExportSectionConfig(dir.absolutePath, books)
+                } else {
+                    startExport(dir.absolutePath, books)
+                }
+            }
+        }
+    }
+
+    /** 用户没选过导出目录时的默认落点 (桌面/legado/books), 创建失败返回 null 走目录选择器。 */
+    private fun defaultBookExportDir(): String? = runCatching {
+        val dir = File(DataStorageProviders.get().bookExportDir)
+        if (dir.isDirectory || dir.mkdirs()) dir.absolutePath else null
+    }.getOrNull()
+
+    // 导出配置弹窗 (对照 app 端 showExportConfig / dialog_export_config.xml 全量字段):
+    // 导出文件名 JS 规则 / 导出类型 txt|epub / 导出编码 / TXT 不导出章节名
+    // (cbz 按 app 端语义由图片书自动选择, 无需用户配置)
+    override fun showExportConfig() {
+        DesktopDialogs.show(
+            DesktopDialogRequest.ExportConfig(
+                currentType = prefs.getInt(PreferKey.exportType, 0),
+                currentFileName = prefs.getString(PreferKey.bookExportFileName, ""),
+                currentCharset = prefs.getString(PreferKey.exportCharset, ""),
+                currentNoChapterName = prefs.getBoolean(PreferKey.exportNoChapterName, false),
+                onConfirm = { type, fileName, charset, noChapterName ->
+                    prefs.putInt(PreferKey.exportType, type)
+                    prefs.putString(PreferKey.bookExportFileName, fileName)
+                    prefs.putString(PreferKey.exportCharset, charset)
+                    prefs.putBoolean(PreferKey.exportNoChapterName, noChapterName)
+                },
+            )
+        )
+    }
+
+    // 自定义导出章节配置弹窗 (对照 app 端 configExportSection / dialog_select_section_export.xml):
+    // 导出所有 / 自定义导出 (章节范围 + epub 分卷大小 + epub 文件名 JS 规则)
+    override fun showExportSectionConfig(path: String, books: List<Book>) {
+        DesktopDialogs.show(
+            DesktopDialogRequest.ExportSectionConfig(
+                path = path,
+                books = books,
+                currentFileName = prefs.getString(PreferKey.episodeExportFileName, ""),
+                onConfirm = { all, scope, size, fileName ->
+                    // 分卷文件名 JS 规则仅在合法时持久化 (对照 etEpubFilename 失焦校验)
+                    if (tryParesExportFileName(fileName)) {
+                        prefs.putString(PreferKey.episodeExportFileName, fileName)
+                    }
+                    if (all) {
+                        startExport(path, books)
+                    } else {
+                        startCustomExport(path, books, scope, size)
+                    }
+                },
+            )
+        )
+    }
+
+    private fun startCustomExport(path: String, books: List<Book>, range: String, size: Int) {
+        if (books.isEmpty()) return
+        scope.launch {
+            Toasters.get().toast("开始导出 ${books.size} 本 (自定义章节)")
+            try {
+                DesktopBookExport.exportCustomEpub(path, books, range, size)
+                Toasters.get().toast("导出完成\n$path")
+            } catch (e: Exception) {
+                AppLog.put("导出书籍出错\n${e.message}", e)
+                Toasters.get().toast("导出书籍出错\n${e.message}")
+            }
+        }
+    }
+
+    private fun startExport(dir: String, books: List<Book>) {
+        val type = prefs.getInt(PreferKey.exportType, 0)
+        scope.launch {
+            Toasters.get().toast("开始导出 ${books.size} 本")
+            runCatching {
+                // 对照 app 端 MainActivity.startExportBooks: 图片书一律导出 cbz,
+                // 其余按配置类型 (0=txt 1=epub)
+                val txtBooks = arrayListOf<Book>()
+                val epubBooks = arrayListOf<Book>()
+                val cbzBooks = arrayListOf<Book>()
+                books.forEach { book ->
+                    when {
+                        book.isImage -> cbzBooks.add(book)
+                        type == 1 -> epubBooks.add(book)
+                        else -> txtBooks.add(book)
+                    }
+                }
+                if (txtBooks.isNotEmpty()) DesktopBookExport.exportTxt(dir, txtBooks)
+                if (epubBooks.isNotEmpty()) DesktopBookExport.exportEpub(dir, epubBooks)
+                if (cbzBooks.isNotEmpty()) DesktopBookExport.exportCbz(dir, cbzBooks)
+            }
+                .onSuccess { Toasters.get().toast("导出完成\n$dir") }
+                .onFailure {
+                    AppLog.put("导出书籍出错\n${it.message}", it)
+                    Toasters.get().toast("导出书籍出错\n${it.message}")
+                }
+        }
+    }
+
+    // ===== 书源管理 =====
+
+    override fun selectionAddToGroups(selection: List<BookSourcePart>) {
+        if (selection.isEmpty()) return
+        DesktopDialogs.show(
+            DesktopDialogRequest.TextInput(title = "添加分组", hint = "分组名") { group ->
+                val name = group.trim()
+                if (name.isEmpty()) return@TextInput
+                bookSourceViewModel.selectionAddToGroups(selection, name)
+            }
+        )
+    }
+
+    override fun selectionRemoveFromGroups(selection: List<BookSourcePart>) {
+        if (selection.isEmpty()) return
+        DesktopDialogs.show(
+            DesktopDialogRequest.TextInput(title = "移除分组", hint = "分组名") { group ->
+                val name = group.trim()
+                if (name.isEmpty()) return@TextInput
+                bookSourceViewModel.selectionRemoveFromGroups(selection, name)
+            }
+        )
+    }
+
+    override fun exportBookSourceSelection(
+        selection: List<BookSourcePart>,
+        allCount: Int,
+        sortAscending: Boolean,
+        sort: BookSourceSort
+    ) {
+        if (selection.isEmpty()) return
+        scope.launch {
+            val json = selectedSourcesJson(selection, sortAscending, sort) ?: return@launch
+            withContext(Dispatchers.Main) {
+                pushExportDispatch("bookSource.json", json, "application/json")
+            }
+        }
+    }
+
+    // 对照 app 端 menu_share_source: saveToFile + share(file)。桌面端无系统分享面板,
+    // shareFile 用系统文件管理器定位文件 (Windows: explorer /select; macOS: open -R; Linux: xdg-open)
+    override fun shareBookSourceSelection(
+        selection: List<BookSourcePart>,
+        allCount: Int,
+        sortAscending: Boolean,
+        sort: BookSourceSort
+    ) {
+        scope.launch {
+            val json = selectedSourcesJson(selection, sortAscending, sort) ?: return@launch
+            val dir = File(DataStorageProviders.get().userExportDir).apply { mkdirs() }
+            val file = File(dir, "shareBookSource.json")
+            runCatching { file.writeText(json, Charsets.UTF_8) }
+                .onSuccess {
+                    PlatformServiceProviders.get().sharing
+                        .shareFile(file.absolutePath, "application/json")
+                    Toasters.get().toast("已导出到 ${file.absolutePath}")
+                }
+                .onFailure { Toasters.get().toast("导出失败\n${it.message}") }
+        }
+    }
+
+    override fun checkBookSource(selection: List<BookSourcePart>) {
+        if (selection.isEmpty()) return
+        DesktopCheckSource.start(selection)
+    }
+
+    override fun cancelCheckSource() {
+        DesktopCheckSource.stop()
+        Debug.finishChecking()
+    }
+
+    // ===== 其它设置 =====
+
+    override fun pickBookTreeUri(onSelected: (String?) -> Unit) {
+        scope.launch { onSelected(FileDialogs.pickDirectory("选择书籍目录")?.absolutePath) }
+    }
+
+    // 书源校验设置 / 直链上传配置: shared 已有对话框实现, 与 app 端同走 overlay
+    // onDismiss 契约同 app 端: 等 overlay 入栈再等其出栈
+    override fun showCheckSourceConfigDialog(onDismiss: () -> Unit) {
+        val navigator = AppNavigatorProviders.get()
+        scope.launch {
+            navigator.overlays.first { list -> list.any { it.key == "check_source_config" } }
+            navigator.overlays.first { list -> list.none { it.key == "check_source_config" } }
+            withContext(Dispatchers.Main) { onDismiss() }
+        }
+        navigator.showOverlay(AppOverlay.Dialog("check_source_config"))
+    }
+
+    override fun showDirectLinkUploadConfigDialog() {
+        AppNavigatorProviders.get()
+            .showOverlay(AppOverlay.Dialog("direct_link_upload_config"))
+    }
+
+    /**
+     * 清理内嵌浏览器数据 (对照 app 端 clearWebViewData 删 webview 私有目录)。
+     *
+     * 桌面端 WebView2 的 cookie/localStorage 落 `{cacheDir}/webview2` (见 WebView2Instance);
+     * 该目录被存活的 WebView2 环境独占, 运行中删不干净, 故与 app 端一样删完提示重启。
+     * app 端 delay 后 appCtx.restart(), 桌面端不自动重启进程 (用户可能正在阅读), 只提示。
+     */
+    override fun clearWebViewData() {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    File(AppFilesDirs.get().cacheDir, "webview2").deleteRecursively()
+                }.getOrDefault(false)
+            }
+            if (ok) {
+                Toasters.get().toast("已清理 WebView 数据, 重启应用后生效")
+            } else {
+                // 浏览器窗口开着时目录被占用, 删除会部分失败
+                Toasters.get().toast("WebView 数据未能完全清理, 请关闭所有浏览器窗口后重试")
+            }
+        }
+    }
+
+    /**
+     * 扫描字体 (对照 app 端 scanFontItems: pref 字体目录 + 内置字体目录, 同名去重按名排序)。
+     *
+     * 桌面端无 SAF, fontFolder 恒为真实路径; 内置目录取 DataStorage.fontsDir
+     * (对应 app 端 externalFiles/font)。
+     */
+    override suspend fun scanFontItems(): List<FontItem> = withContext(Dispatchers.IO) {
+        val fontRegex = Regex("(?i).*\\.[ot]tf")
+        val items = arrayListOf<FontItem>()
+        // 先扫 pref 目录: distinctBy 保留先出现者, 与 app 端 mergeFontItems 优先级一致
+        prefs.getString(PreferKey.fontFolder).takeIf { it.isNotBlank() }?.let {
+            scanFontDir(items, File(it), fontRegex)
+        }
+        scanFontDir(items, File(DataStorageProviders.get().fontsDir), fontRegex)
+        items.distinctBy { it.name }.sortedBy { it.name }
+    }
+
+    private fun scanFontDir(items: MutableList<FontItem>, dir: File, fontRegex: Regex) {
+        if (!dir.isDirectory) return
+        dir.listFiles()?.forEach {
+            if (it.isFile && it.name.matches(fontRegex)) {
+                items.add(FontItem(it.absolutePath, it.name))
+            }
+        }
+    }
+
+    // ===== 导入本地书 (状态与扫描见 DesktopImportBook) =====
+
+    override fun initImportBookData() = DesktopImportBook.init()
+
+    override fun importBookItems(): StateFlow<List<ImportFileItem>> = DesktopImportBook.items
+    override fun importBookPath(): StateFlow<String?> = DesktopImportBook.path
+    override fun importBookLoading(): StateFlow<Boolean> = DesktopImportBook.loading
+    override fun importBookEmptyMsgVisible(): StateFlow<Boolean> = DesktopImportBook.emptyMsgVisible
+
+    override fun pickImportFolder() {
+        scope.launch { FileDialogs.pickDirectory("选择导入目录")?.let { DesktopImportBook.setRoot(it) } }
+    }
+
+    override fun scanImportFolder() = DesktopImportBook.scan()
+
+    override fun alertImportFileName() {
+        DesktopDialogs.show(
+            DesktopDialogRequest.TextInput(
+                title = "按文件名导入",
+                message = "使用js处理文件名变量src，将书名作者分别赋值到变量name author",
+                initialValue = prefs.getString(PreferKey.bookImportFileName, ""),
+                hint = "js",
+            ) { prefs.putString(PreferKey.bookImportFileName, it) }
+        )
+    }
+
+    override fun addImportSelectionToBookshelf(items: List<ImportFileItem>, onComplete: () -> Unit) {
+        DesktopImportBook.addToBookshelf(items, onComplete)
+    }
+
+    override fun updateImportBookFilter(key: String) = DesktopImportBook.updateFilter(key)
+
+    override fun updateImportBookSort(sort: Int) = DesktopImportBook.updateSort(sort)
+
+    override fun navigateImportDir(item: ImportFileItem) = DesktopImportBook.enterDir(item)
+
+    override fun goBackImportDir() {
+        DesktopImportBook.goBack()
+    }
+
+    override fun openImportedBookReader(item: ImportFileItem) {
+        val file = (item as? DesktopImportFile)?.file ?: return
+        openImportFile(file.absolutePath)
+    }
+
+    // 完整分发链 (压缩包/JSON 一键导入/书籍文件) 见 FileAssociationDispatch, 四端共用
+    override fun openImportFile(filePath: String) {
+        scope.launch { FileAssociationDispatch.dispatch(filePath) }
+    }
+
+    // ===== 阅读样式平台能力 =====
+
+    /**
+     * 阅读背景内置图片列表 (对照 app 端 [RemoteAssetsUtils.getBgList])。
+     * RemoteAssetsUtils 位于 shared jvmAndAndroidMain, 桌面 JVM 直接复用同一下载/缓存链路
+     * (bg:// 由 ImageBitmapLoader.jvm 的 RemoteAssetsUtils.getBgCachePath/downloadBgIfNeeded 支撑),
+     * 背景文字配置弹窗的内置预设列表 (午后沙滩等) 与 Android 端一致。
+     */
+    override fun readerBackgroundImageNames(): List<String> = RemoteAssetsUtils.getBgList()
+
+    /**
+     * 系统 TTS 设置入口 (朗读设置弹窗"系统TTS设置"项): 各平台打开自己的语音设置页。
+     * - Windows: `ms-settings:speech` (设置 → 隐私 → 语音)
+     * - macOS: 系统设置 → 辅助功能 → 朗读内容 (Spoken Content)
+     * - Linux: 尽力尝试 gnome-control-center, 失败提示不支持
+     */
+    override fun openTtsSettings() {
+        val os = System.getProperty("os.name").lowercase()
+        val command = when {
+            os.contains("win") -> listOf("cmd", "/c", "start", "", "ms-settings:speech")
+            os.contains("mac") -> listOf(
+                "open",
+                "x-apple.systempreferences:com.apple.preference.universalaccess?SpokenContent"
+            )
+
+            os.contains("linux") -> listOf("gnome-control-center", "universal-access")
+            else -> null
+        }
+        if (command == null) {
+            unsupported("系统 TTS 设置")
+            return
+        }
+        runCatching { ProcessBuilder(command).start() }.onFailure {
+            AppLog.put("打开系统 TTS 设置失败: ${it.message}", it)
+            unsupported("系统 TTS 设置")
+        }
+    }
+
+    // ===== 私有辅助 =====
+
+    /** 上次导出目录 (对照 app 端 ACache "exportBookPath")。 */
+    private const val KEY_EXPORT_BOOK_PATH = "exportBookPath"
+
+    private fun resolveLocalFile(bookUrl: String): File = if (bookUrl.startsWith("file:")) {
+        // Windows 上 URI.path 是 "/C:/..." 不是合法路径, 必须交给 File(URI) 解析盘符
+        runCatching { File(URI(bookUrl)) }.getOrElse { File(bookUrl.removePrefix("file:")) }
+    } else {
+        File(bookUrl)
+    }
+
+    /** 选中书源转 JSON, 按当前界面排序规则对齐 (对照 app 端 saveToFile + getBookSources)。 */
+    private suspend fun selectedSourcesJson(
+        selection: List<BookSourcePart>,
+        sortAscending: Boolean = true,
+        sort: BookSourceSort = BookSourceSort.Default
+    ): String? {
+        val urls = selection.map { it.bookSourceUrl }
+        val rawSources = runCatching { appDb.bookSourceDao.getBookSourcesFix(urls) }.getOrElse {
+            Toasters.get().toast("导出书源失败\n${it.message}")
+            return null
+        }
+        val sorted = when (sort) {
+            BookSourceSort.Weight -> rawSources.sortedBy { it.weight }
+            BookSourceSort.Name -> rawSources.sortedWith { o1, o2 ->
+                o1.bookSourceName.cnCompare(o2.bookSourceName)
+            }
+            BookSourceSort.Url -> rawSources.sortedBy { it.bookSourceUrl }
+            BookSourceSort.Update -> rawSources.sortedByDescending { it.lastUpdateTime }
+            BookSourceSort.Respond -> rawSources.sortedBy { it.respondTime }
+            BookSourceSort.Enable -> rawSources.sortedWith { o1, o2 ->
+                var sortNum = -o1.enabled.compareTo(o2.enabled)
+                if (sortNum == 0) sortNum = o1.weight.compareTo(o2.weight)
+                if (sortNum == 0) sortNum = o1.bookSourceName.cnCompare(o2.bookSourceName)
+                sortNum
+            }
+            else -> rawSources
+        }
+        val sources = if (sortAscending) sorted else sorted.reversed()
+        // 对照 app 端: 导出前强制关闭危险 API 开关
+        sources.forEach { if (it.enableDangerousApi == true) it.enableDangerousApi = false }
+        return GSON.toJson(sources)
+    }
+
+    /** 书架导出字段 (与 app 端 exportBookshelf 的 13 个字段一致)。 */
+    private fun Book.toShelfJsonMap(): Map<String, Any?> = buildMap {
+        put("bookUrl", bookUrl)
+        put("tocUrl", tocUrl)
+        put("origin", origin)
+        put("originName", originName)
+        put("name", name)
+        put("author", author)
+        kind?.let { put("kind", it) }
+        coverUrl?.let { put("coverUrl", it) }
+        customCoverUrl?.let { put("customCoverUrl", it) }
+        intro?.let { put("intro", it) }
+        customIntro?.let { put("customIntro", it) }
+        put("type", type)
+        wordCount?.let { put("wordCount", it) }
+    }
+}
