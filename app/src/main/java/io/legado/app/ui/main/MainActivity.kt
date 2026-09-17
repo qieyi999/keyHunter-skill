@@ -773,9 +773,7 @@ class MainActivity : BaseComposeActivity(imageBg = false) {
         sp.edit().remove("pending_sources").apply()
         lifecycleScope.launch(Dispatchers.IO) {
             kotlin.runCatching {
-                val type = object : com.google.gson.reflect.TypeToken<List<io.legado.app.data.entities.BookSource>>() {}.type
-                val list: List<io.legado.app.data.entities.BookSource> =
-                    com.google.gson.GsonBuilder().create().fromJson(json, type)
+                val list = io.legado.app.utils.GSON.fromJsonArray<io.legado.app.data.entities.BookSource>(json).getOrThrow()
                 if (list.isNotEmpty()) {
                     io.legado.app.data.appDb.bookSourceDao.insert(*list.toTypedArray())
                     android.util.Log.d("JianYue", "已自动导入书源: " + list.size + "个")
