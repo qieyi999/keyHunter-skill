@@ -105,6 +105,7 @@ import io.legado.app.ui.root.ScreenModelStore
 import io.legado.app.ui.widget.dialog.encodePhotoOverlayPayload
 import io.legado.app.utils.ACache
 import io.legado.app.utils.FileUtils
+import io.legado.app.utils.fromJsonArray
 import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.keepScreenOn
 import io.legado.app.utils.observeEvent
@@ -773,7 +774,8 @@ class MainActivity : BaseComposeActivity(imageBg = false) {
         sp.edit().remove("pending_sources").apply()
         lifecycleScope.launch(Dispatchers.IO) {
             kotlin.runCatching {
-                val list = io.legado.app.utils.GSON.fromJsonArray<io.legado.app.data.entities.BookSource>(json).getOrThrow()
+                val list: List<io.legado.app.data.entities.BookSource> =
+                    io.legado.app.utils.GSON.fromJsonArray<io.legado.app.data.entities.BookSource>(json).getOrThrow()
                 if (list.isNotEmpty()) {
                     io.legado.app.data.appDb.bookSourceDao.insert(*list.toTypedArray())
                     android.util.Log.d("JianYue", "已自动导入书源: " + list.size + "个")
