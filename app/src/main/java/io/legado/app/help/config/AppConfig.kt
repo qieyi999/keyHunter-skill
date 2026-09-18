@@ -256,7 +256,7 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
     val onlyLatestBackup by boolPref(PreferKey.onlyLatestBackup, true)
     val autoCheckNewBackup by boolPref(PreferKey.autoCheckNewBackup, true)
     val autoCheckUpdate by boolPref(PreferKey.autoCheckUpdate, true)
-    val defaultHomePage by stringPref(PreferKey.defaultHomePage, "bookshelf")
+    val defaultHomePage by stringPref(PreferKey.defaultHomePage, "explore")
     val updateToVariant by stringPref(PreferKey.updateToVariant, "default_version")
     val streamReadAloudAudio by boolPref(PreferKey.streamReadAloudAudio, false)
     val doublePageHorizontal by stringPref(PreferKey.doublePageHorizontal)
