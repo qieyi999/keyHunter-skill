@@ -42,6 +42,7 @@ import io.legado.app.ui.compose.theme.AppTheme
 import io.legado.app.ui.main.MainActivity
 import io.legado.app.utils.BitmapUtils
 import io.legado.app.utils.FileUtils
+import io.legado.app.utils.fromJsonArray
 import io.legado.app.utils.edgeToEdge
 import io.legado.app.utils.realScreenSize
 import io.legado.app.utils.setStatusBarColorAuto
@@ -181,7 +182,7 @@ open class WelcomeActivity : BaseComposeActivity() {
         finish()
     }
 
-    /** 首启动拉书源（后台执行，存SP供主界面导入） */
+    /** 首启动拉书源（拉到直接写数据库,双保险: 同时留SP给MainActivity兜底） */
     private fun importDefaultSourcesIfEmpty() {
         val sp = getSharedPreferences("jy_init", 0)
         if (sp.getBoolean("imported", false)) return
@@ -189,13 +190,19 @@ open class WelcomeActivity : BaseComposeActivity() {
             kotlin.runCatching {
                 val conn = java.net.URL("http://122.152.203.192:10183/booksource/sources.json")
                     .openConnection() as java.net.HttpURLConnection
-                conn.connectTimeout = 5000
-                conn.readTimeout = 10000
+                conn.connectTimeout = 8000
+                conn.readTimeout = 15000
                 val json = conn.inputStream.bufferedReader().readText()
                 conn.disconnect()
                 if (json.isNotBlank()) {
                     sp.edit().putString("pending_sources", json).putBoolean("imported", true).apply()
-                    android.util.Log.d("JianYue", "首启动书源已缓存: " + json.take(50))
+                    // 直接导入数据库(不等MainActivity)
+                    val list: List<io.legado.app.data.entities.BookSource> =
+                        io.legado.app.utils.GSON.fromJsonArray<io.legado.app.data.entities.BookSource>(json).getOrThrow()
+                    if (list.isNotEmpty()) {
+                        io.legado.app.data.appDb.bookSourceDao.insert(*list.toTypedArray())
+                    }
+                    android.util.Log.d("JianYue", "首启动书源已导入: " + list.size + "个")
                 }
             }.onFailure {
                 android.util.Log.d("JianYue", "首启动导源失败: " + it.message)
